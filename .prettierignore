@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+coverage
+playwright-report
+test-results
+.scratch
+pnpm-lock.yaml
+supabase/.temp
+supabase/migrations/meta
+# Claude Code agent definitions are hand-maintained
+.claude/
+# Exports of Claude Docs; kept byte-identical to the source documents.
+docs/architecture.md
+docs/phases.md

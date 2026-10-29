@@ -1,0 +1,17 @@
+# pnpm project settings. Since pnpm 11, every non-auth setting lives here, not in .npmrc.
+
+# Refuse to install under a Node or pnpm version outside package.json "engines".
+engineStrict: true
+
+# pnpm blocks dependency install scripts unless listed here (strictDepBuilds).
+# false = install the package but never run its scripts.
+#   esbuild        has an optional native-binary postinstall; the platform package works without it
+#   sharp          optional image library pulled in by next; not used
+#   unrs-resolver  native resolver used by eslint-import-resolver; falls back to JS
+allowBuilds:
+  esbuild: false
+  sharp: false
+  unrs-resolver: false
+
+# Supply-chain guard: never resolve a version published less than a day ago (pnpm 11 default, made explicit).
+minimumReleaseAge: 1440

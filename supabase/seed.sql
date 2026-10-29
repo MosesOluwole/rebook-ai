@@ -1,0 +1,2 @@
+-- Local development seed. Intentionally empty in Phase 0.
+-- Seed data for later phases is added here; it must be synthetic and contain no real personal data.

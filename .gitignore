@@ -1,0 +1,32 @@
+# Dependencies
+/node_modules
+
+# Next.js
+/.next/
+/out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Tests
+/coverage
+/.scratch
+/playwright-report
+/test-results
+/blob-report
+
+# Env files: only the example is committed
+.env*
+!.env.example
+
+# Supabase local state
+/supabase/.temp
+/supabase/.branches
+
+# Logs and OS files
+*.log
+.DS_Store
+
+# Editors
+.idea
+.vscode/*
+!.vscode/extensions.json
