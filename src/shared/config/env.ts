@@ -13,9 +13,21 @@ import { z } from 'zod';
  * and validation would fail. NEXT_PUBLIC_* values are public; never put secrets in them.
  */
 
+const postgresUrl = z.url({ protocol: /^postgres(?:ql)?$/ });
+
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  DATABASE_URL: z.url({ protocol: /^postgres(?:ql)?$/ }),
+  /**
+   * Runtime connection for the app: the `rebook_authenticator` login role, which holds no table
+   * privileges until `withTenant` switches to `rebook_app` or `rebook_worker` in a transaction.
+   */
+  APP_DATABASE_URL: postgresUrl,
+  /**
+   * Owner connection (Supabase's `postgres` role, the design's `rebook_owner`). Used only by
+   * migrations, Drizzle Kit, `pnpm db:roles` and test fixtures; the app never needs it, so it is
+   * optional here and tooling asks for it through getOwnerDatabaseUrl().
+   */
+  DATABASE_URL: postgresUrl.optional(),
   NEXT_PUBLIC_APP_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:3000'),
 });
 
@@ -25,8 +37,12 @@ type EnvVariable = keyof Env;
 
 const HINTS: Readonly<Record<EnvVariable, string>> = {
   NODE_ENV: "one of 'development', 'test' or 'production' (set by Next.js)",
+  APP_DATABASE_URL:
+    'Postgres connection string for the app role rebook_authenticator, e.g. ' +
+    'postgresql://rebook_authenticator:<password>@127.0.0.1:54322/postgres',
   DATABASE_URL:
-    'Postgres connection string, e.g. postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+    'Postgres connection string for the owner role used by migrations and tooling, e.g. ' +
+    'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
   NEXT_PUBLIC_APP_URL: 'public origin of the web app, e.g. http://localhost:3000',
 };
 
@@ -64,7 +80,7 @@ function isBlank(value: string | undefined): value is undefined | '' {
 
 /**
  * Validates a raw environment (normally process.env). Blank values count as missing, so an
- * empty `DATABASE_URL=` line in .env is reported as missing rather than as a malformed URL.
+ * empty `APP_DATABASE_URL=` line in .env is reported as missing rather than as a malformed URL.
  * Throws EnvValidationError with one line per problem.
  */
 export function parseEnv(source: Readonly<Record<string, string | undefined>>): Env {
@@ -92,4 +108,18 @@ let cached: Env | undefined;
 export function getEnv(): Env {
   cached ??= parseEnv(process.env);
   return cached;
+}
+
+/**
+ * The owner connection string, for tooling and test fixtures only. Throws the same readable
+ * error as boot validation when it is not configured.
+ */
+export function getOwnerDatabaseUrl(): string {
+  const url = getEnv().DATABASE_URL;
+  if (url === undefined) {
+    throw new EnvValidationError([
+      { variable: 'DATABASE_URL', problem: 'missing', hint: HINTS.DATABASE_URL },
+    ]);
+  }
+  return url;
 }

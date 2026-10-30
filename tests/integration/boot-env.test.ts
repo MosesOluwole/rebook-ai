@@ -60,7 +60,7 @@ function bootNextDev(
   // The child boots the way `pnpm dev` does (Vitest sets NODE_ENV=test). The variables under test
   // start from a clean slate so the outcome does not depend on the shell that runs the tests.
   const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'development' };
-  delete env.DATABASE_URL;
+  delete env.APP_DATABASE_URL;
   delete env.NEXT_PUBLIC_APP_URL;
   for (const [name, value] of Object.entries(variables)) {
     if (value !== undefined) {
@@ -117,37 +117,41 @@ describe('server start-up with an invalid environment (next dev)', () => {
     rmSync(appDir, { recursive: true, force: true });
   });
 
-  it('exits with code 1 and names the variable when DATABASE_URL is not set at all', async () => {
-    const result = await bootNextDev(appDir, { DATABASE_URL: undefined }, await freePort());
+  it('exits with code 1 and names the variable when APP_DATABASE_URL is not set at all', async () => {
+    const result = await bootNextDev(appDir, { APP_DATABASE_URL: undefined }, await freePort());
 
     expect(result.signal).toBeNull();
     expect(result.code).toBe(1);
     expect(result.output).toMatch(/Invalid environment configuration \(1 problem\)/);
-    expect(result.output).toMatch(/DATABASE_URL: missing\. Expected Postgres connection string/);
+    expect(result.output).toMatch(
+      /APP_DATABASE_URL: missing\. Expected Postgres connection string/,
+    );
     expect(result.output).toMatch(/Copy \.env\.example to \.env .*docs\/setup\.md/);
   });
 
-  it('treats a blank DATABASE_URL as missing (docs/setup.md, troubleshooting)', async () => {
-    const result = await bootNextDev(appDir, { DATABASE_URL: '   ' }, await freePort());
+  it('treats a blank APP_DATABASE_URL as missing (docs/setup.md, troubleshooting)', async () => {
+    const result = await bootNextDev(appDir, { APP_DATABASE_URL: '   ' }, await freePort());
 
     expect(result.signal).toBeNull();
     expect(result.code).toBe(1);
-    expect(result.output).toMatch(/DATABASE_URL: missing\. Expected Postgres connection string/);
+    expect(result.output).toMatch(
+      /APP_DATABASE_URL: missing\. Expected Postgres connection string/,
+    );
   });
 
-  it('exits with code 1 for a malformed DATABASE_URL without echoing its value', async () => {
+  it('exits with code 1 for a malformed APP_DATABASE_URL without echoing its value', async () => {
     const credential = 'synthetic-credential-0b8e';
     const host = 'db.invalid';
     const result = await bootNextDev(
       appDir,
-      { DATABASE_URL: `mysql://app:${credential}@${host}:3306/rebook` },
+      { APP_DATABASE_URL: `mysql://app:${credential}@${host}:3306/rebook` },
       await freePort(),
     );
 
     expect(result.signal).toBeNull();
     expect(result.code).toBe(1);
     expect(result.output).toMatch(/Invalid environment configuration \(1 problem\)/);
-    expect(result.output).toMatch(/DATABASE_URL: .*Expected Postgres connection string/);
+    expect(result.output).toMatch(/APP_DATABASE_URL: .*Expected Postgres connection string/);
     expect(result.output).not.toContain(credential);
     expect(result.output).not.toContain(host);
   });
@@ -155,14 +159,14 @@ describe('server start-up with an invalid environment (next dev)', () => {
   it('reports every problem at once, one line per variable', async () => {
     const result = await bootNextDev(
       appDir,
-      { DATABASE_URL: '', NEXT_PUBLIC_APP_URL: 'ftp://not-a-web-origin' },
+      { APP_DATABASE_URL: '', NEXT_PUBLIC_APP_URL: 'ftp://not-a-web-origin' },
       await freePort(),
     );
 
     expect(result.signal).toBeNull();
     expect(result.code).toBe(1);
     expect(result.output).toMatch(/Invalid environment configuration \(2 problems\)/);
-    expect(result.output).toMatch(/^ {2}- DATABASE_URL: missing\./m);
+    expect(result.output).toMatch(/^ {2}- APP_DATABASE_URL: missing\./m);
     expect(result.output).toMatch(/^ {2}- NEXT_PUBLIC_APP_URL: .*Expected public origin/m);
   });
 });

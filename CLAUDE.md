@@ -50,6 +50,9 @@ scripts; see `docs/setup.md` for first-time setup.
 | `pnpm db:migrate`        | Apply pending migrations (`supabase migration up`)                    |
 | `pnpm db:reset`          | Recreate the local database from migrations and seed                  |
 | `pnpm db:generate`       | Generate a migration from the Drizzle schema (`drizzle-kit generate`) |
+| `pnpm db:roles`          | Set the local `rebook_authenticator` password from `APP_DATABASE_URL` |
+| `pnpm db:check-schema`   | Tenant-isolation check on every `rebook` table (CI)                   |
+| `pnpm db:docs`           | Regenerate `docs/schema.md` from the catalogue (`--check` in CI)      |
 
 ## Code layout and boundaries
 
@@ -62,8 +65,10 @@ src/modules/<module>/
   application/                Use cases. Depend on domain and on ports (interfaces), receive deps as arguments.
   infrastructure/             Adapters: database schema and repositories, clocks, providers.
 src/shared/config/env.ts      The only place that reads app configuration from process.env (Zod, at boot).
-                              getEnv() is server-only.
+                              getEnv() is server-only. APP_DATABASE_URL is the app's connection;
+                              DATABASE_URL is the owner connection for tooling and fixtures only.
 src/shared/db/client.ts       The only place a Postgres connection is created.
+src/modules/tenancy/          withTenant, TenantTx, the tenant context and the core tenant-owned tables.
 src/shared/kernel/            Pure ports and types any module may use (e.g. Clock).
 tests/unit, tests/integration, tests/e2e, tests/helpers, tests/fixtures
 supabase/migrations/          SQL migrations, applied by the Supabase CLI.
@@ -91,10 +96,22 @@ and platform (health and operations). Create a module only when its phase needs 
 - Validation: Zod at every boundary (route handlers, server actions, jobs, webhooks, env).
 - Errors: typed, never swallowed. Logging: only `console.warn`/`console.error` until structured
   logging arrives with the worker; never log request bodies or personal data.
-- Database: every connection comes from `createDbClient`; from Phase 1, every query runs inside
-  `withTenant` and repositories accept only its transaction handle. Migrations are generated into
-  `supabase/migrations` by `pnpm db:generate` (hand-written SQL: `pnpm db:generate --custom
---name=<what>`), applied only by the Supabase CLI, forward-only, expand then contract.
+- Database: every connection comes from `createDbClient`. Every query against tenant data runs
+  inside `withTenant` (web) or `withWorkerTenant` (jobs) from `src/modules/tenancy`, and every
+  repository function takes the branded `TenantTx` it provides. Never query `rebook` tables with
+  a bare database handle, never connect as the owner at runtime, and never read `tenant_id` from
+  a request body, header, query string or job payload without re-verifying it.
+- Tables: all in the `rebook` schema (never `public`). Every tenant-owned table has
+  `tenant_id uuid not null`, `unique (tenant_id, id)`, RLS enabled and forced, policies comparing
+  against `(select nullif(current_setting('app.tenant_id', true), '')::uuid)`, grants only to
+  `rebook_app`/`rebook_worker`, and children reference parents as
+  `(tenant_id, parent_id) → parent (tenant_id, id)`. UUIDv7 ids via `rebook.uuid_generate_v7()`.
+  Add the table to `tests/integration/tenancy/isolation.generated.test.ts` fixtures and
+  `tests/helpers/tenant-fixtures.ts`, run `pnpm db:check-schema` and `pnpm db:docs`.
+- Migrations are generated into `supabase/migrations` by `pnpm db:generate` for table DDL
+  (hand-written SQL for roles, policies, grants, functions: `pnpm db:generate --custom
+--name=<what>`), applied only by the Supabase CLI, forward-only, expand then contract. No
+  passwords or secrets in migrations.
 - Next.js: `cacheComponents` is off (tenant data must never be cached across requests); route
   handlers that must reflect live state export `dynamic = 'force-dynamic'`.
 - Formatting is Prettier's; do not fight it. Run `pnpm check` before asking for review.
@@ -103,8 +120,10 @@ and platform (health and operations). Create a module only when its phase needs 
 
 - Unit tests sit next to the code (`*.test.ts`) or in `tests/unit`; they touch no database.
 - Integration tests in `tests/integration` run against the real local Postgres through
-  `tests/helpers/db.ts`. Never mock the database for RLS, isolation, constraints, idempotency,
-  triggers or concurrency. Use the runtime roles once they exist, never a superuser.
+  `tests/helpers/db.ts`: `connectAppDb()` (as `rebook_authenticator`, through `withTenant`) for
+  every behaviour under test, `connectOwnerDb()` only for catalogue checks and the owner-only
+  fixtures in `tests/helpers/tenant-fixtures.ts`. Never mock the database for RLS, isolation,
+  constraints, idempotency, triggers or concurrency. Never assert behaviour as the owner.
 - E2E tests in `tests/e2e` run in both Playwright projects (desktop and 375 px). No retries: a
   flaky test is a failing test.
 - Never skip, `.only`, loosen or delete an assertion to get green. Fixtures are synthetic.

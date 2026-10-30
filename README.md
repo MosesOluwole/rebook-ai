@@ -16,6 +16,6 @@ Quick start (details and prerequisites in the setup guide):
 nvm install && corepack enable
 pnpm install
 cp .env.example .env
-pnpm db:start
+pnpm db:start     # supabase start + pnpm db:roles
 pnpm dev          # http://localhost:3000/health
 ```

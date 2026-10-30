@@ -1,9 +1,9 @@
 import { loadEnvConfig } from '@next/env';
 import { defineConfig } from 'drizzle-kit';
 
-import { getEnv } from './src/shared/config/env';
+import { getOwnerDatabaseUrl } from './src/shared/config/env';
 
-// Load .env the same way Next.js does, so drizzle-kit sees the validated DATABASE_URL.
+// Load .env the same way Next.js does, so drizzle-kit sees the validated owner connection.
 loadEnvConfig(process.cwd());
 
 export default defineConfig({
@@ -15,7 +15,7 @@ export default defineConfig({
   out: './supabase/migrations',
   migrations: { prefix: 'supabase' },
   casing: 'snake_case',
-  dbCredentials: { url: getEnv().DATABASE_URL },
+  dbCredentials: { url: getOwnerDatabaseUrl() },
   strict: true,
   verbose: true,
 });

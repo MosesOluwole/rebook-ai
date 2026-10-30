@@ -15,8 +15,10 @@ concurrency:
 
 env:
   NEXT_TELEMETRY_DISABLED: '1'
-  # The local-stack connection string. CI runs the same Supabase Postgres image developers use.
+  # Local-stack connection strings. CI runs the same Supabase Postgres image developers use.
+  # DATABASE_URL is the owner (migrations, tooling, fixtures); APP_DATABASE_URL is the app role.
   DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+  APP_DATABASE_URL: postgresql://rebook_authenticator:rebook_local_dev@127.0.0.1:54322/postgres
 
 jobs:
   static:
@@ -55,6 +57,12 @@ jobs:
         run: pnpm exec supabase db start
       - name: Re-apply migrations (must be a no-op on an up-to-date database)
         run: pnpm db:migrate
+      - name: Set the local password of rebook_authenticator
+        run: pnpm db:roles
+      - name: Tenant-isolation schema check
+        run: pnpm db:check-schema
+      - name: docs/schema.md matches the migrated schema
+        run: pnpm db:docs --check
       - run: pnpm test:integration
 
   e2e:

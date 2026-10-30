@@ -1,0 +1,2 @@
+CREATE INDEX "audit_logs_tenant_id_created_at_idx" ON "rebook"."audit_logs" USING btree ("tenant_id","created_at" DESC NULLS LAST);--> statement-breakpoint
+CREATE INDEX "tenant_memberships_user_id_idx" ON "rebook"."tenant_memberships" USING btree ("user_id");

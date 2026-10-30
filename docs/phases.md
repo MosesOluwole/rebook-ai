@@ -74,27 +74,32 @@ Privacy and legal work for the midwife pilot is parked by decision and must be r
 
 **What.**
 
-- Postgres roles: `rebook_owner` (migrations only), `rebook_app` and `rebook_worker` (both `NOBYPASSRLS`), `rebook_platform` (reserved, no grants yet).
-- `withTenant(ctx, fn)`: opens a transaction, sets `app.tenant_id`, `app.actor_id`, `app.actor_kind`, `app.request_id` with `SET LOCAL`, and passes a typed transaction handle that repositories require.
-- Core tables: `tenants`, `tenant_memberships`, `locations`, `audit_logs`, `tenant_feature_flags`, `idempotency_keys`. UUIDv7 keys, `timestamptz`, `unique (tenant_id, id)`.
-- RLS on every tenant-owned table using `current_setting('app.tenant_id', true)::uuid`, failing closed when unset.
+- App tables live in a dedicated `rebook` schema that Supabase's Data API does not expose; `anon` and `authenticated` get no grants on it.
+- Roles: `rebook_owner` is the migration role (Supabase's `postgres`) and is never used at runtime. `rebook_authenticator` (LOGIN, NOINHERIT, no table privileges) is what the app and tests connect as. `rebook_app` and `rebook_worker` (NOLOGIN, `NOBYPASSRLS`) hold table privileges and are entered per transaction with `SET LOCAL ROLE`. `rebook_platform` is reserved with no grants. Login passwords are set outside migrations (local setup script; platform secrets in production).
+- `withTenant(ctx, fn)`: validates `ctx` with Zod, opens a transaction, runs `SET LOCAL ROLE rebook_app` and `set_config(name, value, true)` for `app.tenant_id`, `app.actor_id`, `app.actor_kind`, `app.request_id` (bind parameters; `SET LOCAL` cannot take them), and passes a branded `TenantTx` handle that repositories require. `withWorkerTenant` does the same as `rebook_worker`.
+- Core tables: `tenants`, `tenant_memberships`, `locations`, `audit_logs`, `tenant_feature_flags`, `idempotency_keys`. UUIDv7 primary keys from a tested SQL function (Postgres 17 has no built-in `uuidv7()`), `timestamptz`, `unique (tenant_id, id)`.
+- RLS enabled and forced on every table. Policies compare against `(select nullif(current_setting('app.tenant_id', true), '')::uuid)`. The `nullif` matters: once a pooled connection has had the setting, it reads back as an empty string, and casting that to uuid would raise an error instead of returning zero rows.
+- `tenants` is readable and insertable only where `id` equals the current tenant (the app generates the id, sets context, then inserts). `tenant_memberships` is also readable where `user_id` equals the current actor, so Phase 2 can list a user's tenants.
 - Composite FK pattern `(tenant_id, parent_id) references parent (tenant_id, id)`.
-- `audit_logs` append-only: no UPDATE or DELETE grant to runtime roles.
-- Extensions: `btree_gist`, `pg_trgm`, `citext` as needed.
-- Generated isolation test suite: for every tenant-owned table, tenant A's context sees zero of tenant B's rows and cannot insert rows pointing at tenant B's parents.
-- CI schema check: fails if a table in the public schema lacks `tenant_id` (outside an allow-list), an RLS policy, or `FORCE ROW LEVEL SECURITY`.
-- `docs/schema.md` generated from migrations plus the invariants table.
+- `audit_logs` append-only: runtime roles get INSERT and SELECT only.
+- Extensions `btree_gist`, `pg_trgm`, `citext` as needed, installed in the `extensions` schema.
+- Generated isolation test suite: for every tenant-owned table found in the catalogue, tenant A's context sees zero of tenant B's rows and cannot insert rows pointing at tenant B's parents.
+- CI schema check: fails if a table in the `rebook` schema lacks `tenant_id` (outside an allow-list), an RLS policy or `FORCE ROW LEVEL SECURITY`, or has any grant to `anon` or `authenticated`.
+- ADR-002 records the schema, role and context decisions; `docs/schema.md` generated from migrations plus the invariants table.
 
 **Acceptance criteria.**
 
-- [ ] Migrations apply on an empty database and are idempotent to re-run in CI.
-- [ ] As `rebook_app` with no tenant set, every select on a tenant table returns zero rows.
+- [ ] Migrations apply on an empty database (`pnpm db:reset`) and on top of Phase 0's schema in CI.
+- [ ] `anon` and `authenticated` cannot read or write any `rebook` table, and the schema is absent from the Data API config.
+- [ ] Connecting as `rebook_authenticator` outside `withTenant` gets permission denied on every `rebook` table.
+- [ ] As `rebook_app` with no tenant set, every select on a tenant table returns zero rows without an error.
 - [ ] As `rebook_app` with tenant A set, selecting, updating or deleting tenant B's rows affects zero rows.
 - [ ] Inserting a child row with tenant A and a tenant B parent fails with a foreign-key error.
 - [ ] `UPDATE` or `DELETE` on `audit_logs` as a runtime role fails with a permission error.
-- [ ] A repository function cannot be called without the `withTenant` transaction handle (type error demonstrated in a test fixture).
-- [ ] Adding a test table without RLS makes the CI schema check fail.
-- [ ] `SET LOCAL` context does not leak between pooled transactions (test runs two tenants back to back on one connection).
+- [ ] A repository function cannot be called without the `TenantTx` handle (type error demonstrated in a `@ts-expect-error` test).
+- [ ] Adding a test table without RLS, or with a grant to `anon`, makes the CI schema check fail.
+- [ ] On one pooled connection, a transaction with no tenant context that runs after one with tenant A sees zero rows and raises no error.
+- [ ] The UUIDv7 function returns valid version-7 UUIDs that sort in creation order (tested in SQL).
 
 ## Phase 2 — Auth, onboarding and permissions
 
