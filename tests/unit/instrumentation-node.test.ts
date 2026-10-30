@@ -36,7 +36,7 @@ describe('validateEnvironmentOrExit', () => {
   });
 
   it('prints every problem and exits with code 1 when the environment is invalid', async () => {
-    vi.stubEnv('DATABASE_URL', '');
+    vi.stubEnv('APP_DATABASE_URL', '');
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'ftp://not-a-web-origin');
     const { validateEnvironmentOrExit } = await loadFresh();
 
@@ -49,13 +49,13 @@ describe('validateEnvironmentOrExit', () => {
 
     const printed = consoleError.mock.calls.map((call) => call.map(String).join(' ')).join('\n');
     expect(printed).toMatch(/Invalid environment configuration \(2 problems\)/);
-    expect(printed).toMatch(/DATABASE_URL: missing\. Expected Postgres connection string/);
+    expect(printed).toMatch(/APP_DATABASE_URL: missing\. Expected Postgres connection string/);
     expect(printed).toMatch(/NEXT_PUBLIC_APP_URL: .*Expected public origin of the web app/);
     expect(printed).toMatch(/Copy \.env\.example to \.env .*docs\/setup\.md/);
   });
 
   it('returns without printing or exiting when the environment is valid', async () => {
-    vi.stubEnv('DATABASE_URL', VALID_DATABASE_URL);
+    vi.stubEnv('APP_DATABASE_URL', VALID_DATABASE_URL);
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000');
     vi.stubEnv('NODE_ENV', 'test');
     const { validateEnvironmentOrExit } = await loadFresh();

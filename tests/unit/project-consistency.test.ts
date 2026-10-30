@@ -163,7 +163,7 @@ describe('.env.example (Phase 0 criterion 1 and 4)', () => {
 
   it('declares every required variable on an active line', () => {
     const required = requiredVariables();
-    expect(required).toContain('DATABASE_URL');
+    expect(required).toContain('APP_DATABASE_URL');
     for (const variable of required) {
       expect(Object.hasOwn(exampleValues, variable)).toBe(true);
     }
@@ -173,9 +173,16 @@ describe('.env.example (Phase 0 criterion 1 and 4)', () => {
     expect(() => parseEnv(exampleValues)).not.toThrow();
   });
 
-  it('holds placeholders only: the database points at the local stack, never a remote host', () => {
-    const databaseUrl = exampleValues.DATABASE_URL ?? '';
-    expect(['127.0.0.1', 'localhost']).toContain(new URL(databaseUrl).hostname);
+  it('holds placeholders only: both connections point at the local stack, never a remote host', () => {
+    for (const variable of ['APP_DATABASE_URL', 'DATABASE_URL']) {
+      const url = new URL(exampleValues[variable] ?? '');
+      expect(['127.0.0.1', 'localhost'], variable).toContain(url.hostname);
+    }
+  });
+
+  it('connects the app as rebook_authenticator and tooling as the owner', () => {
+    expect(new URL(exampleValues.APP_DATABASE_URL ?? '').username).toBe('rebook_authenticator');
+    expect(new URL(exampleValues.DATABASE_URL ?? '').username).toBe('postgres');
   });
 });
 

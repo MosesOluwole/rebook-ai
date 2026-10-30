@@ -63,6 +63,9 @@ importers:
       supabase:
         specifier: 2.122.0
         version: 2.122.0
+      tsx:
+        specifier: 4.23.15
+        version: 4.23.15
       typescript:
         specifier: 6.0.3
         version: 6.0.3

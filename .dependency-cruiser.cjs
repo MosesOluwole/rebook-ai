@@ -182,11 +182,14 @@ module.exports = {
     {
       name: 'no-deprecated-core',
       severity: 'error',
-      comment: 'Import of a deprecated Node core module.',
+      comment:
+        'Import of a deprecated Node core module. node:async_hooks is deliberately not listed: ' +
+        'its AsyncLocalStorage export is stable (used by withTenant); only the low-level ' +
+        'createHook API is experimental.',
       from: {},
       to: {
         dependencyTypes: ['core'],
-        path: ['^(?:node:)?(?:async_hooks|punycode|domain|constants|sys|_linklist|_stream_wrap)$'],
+        path: ['^(?:node:)?(?:punycode|domain|constants|sys|_linklist|_stream_wrap)$'],
       },
     },
     {

@@ -1,0 +1,34 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1793313312450,
+      "tag": "20261029223512_tenancy_roles_schema_functions",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1793313314187,
+      "tag": "20261029223514_tenancy_core_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793313439404,
+      "tag": "20261029223719_tenancy_rls_policies_grants",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1793317920514,
+      "tag": "20261029235200_tenancy_indexes",
+      "breakpoints": true
+    }
+  ]
+}

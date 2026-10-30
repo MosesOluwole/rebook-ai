@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type DbClient } from '@/shared/db/client';
 
-import { connectTestDb } from '../helpers/db';
+import { connectOwnerDb } from '../helpers/db';
 
 const projectRoot = process.cwd();
 
@@ -36,7 +36,7 @@ describe('local database (Supabase Postgres)', () => {
   let client: DbClient;
 
   beforeAll(async () => {
-    client = await connectTestDb();
+    client = await connectOwnerDb();
   });
 
   afterAll(async () => {
