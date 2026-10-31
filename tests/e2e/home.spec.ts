@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './helpers/fixtures';
 
 test('home page renders and fits the viewport', async ({ page }) => {
   await page.goto('/');

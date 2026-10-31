@@ -19,3 +19,10 @@ export function parseFeatureFlagName(input: unknown): FeatureFlagName {
   }
   return result.data;
 }
+
+/**
+ * Flags the back office knows how to show. Anything matching the name pattern can be stored; this
+ * list is what the settings page offers. `ai_chat` gates the AI assistant (docs/architecture.md §9),
+ * default off.
+ */
+export const KNOWN_FEATURE_FLAGS = ['ai_chat'] as const;

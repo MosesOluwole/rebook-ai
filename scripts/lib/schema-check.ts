@@ -6,8 +6,12 @@ import { type Sql, type TransactionSql } from 'postgres';
  * `pnpm db:check-schema` in CI and by tests/integration/tenancy/schema-check.test.ts.
  */
 
-/** Tables that legitimately have no tenant_id column. `tenants` is the tenant. */
-export const TENANT_ID_ALLOW_LIST: readonly string[] = ['tenants'];
+/**
+ * Tables that legitimately have no tenant_id column. `tenants` is the tenant; `rate_limits` is
+ * platform-level (sign-in happens before any tenant exists) and holds only hashed keys and
+ * counters (docs/adr/ADR-004-auth-sessions.md §9).
+ */
+export const TENANT_ID_ALLOW_LIST: readonly string[] = ['tenants', 'rate_limits'];
 
 /**
  * Roles that must never hold a privilege on a `rebook` table or on the schema: the Supabase Data
@@ -39,6 +43,7 @@ interface GrantRow {
 interface ForeignKeyRow {
   readonly table: string;
   readonly name: string;
+  readonly ref_schema: string;
   readonly ref_table: string;
   readonly columns: string[];
 }
@@ -98,11 +103,12 @@ export async function checkSchema(sql: SqlHandle): Promise<SchemaFinding[]> {
     order by c.relname, g.grantee
   `;
 
-  // Every foreign key out of a tenant-owned table is either tenant_id → tenants(id) or a
-  // composite key that starts with tenant_id, so a row can never point into another tenant
-  // (docs/architecture.md §5).
+  // Every foreign key out of a tenant-owned table is either tenant_id → tenants(id), a composite
+  // key that starts with tenant_id, or a single user column → auth.users(id), so a row can never
+  // point into another tenant (docs/architecture.md §5, ADR-002 §7). Supabase Auth users are not
+  // tenant-owned, which is why the auth.users reference is the one single-column exception.
   const foreignKeys = await sql<ForeignKeyRow[]>`
-    select c.relname as table, k.conname as name, r.relname as ref_table,
+    select c.relname as table, k.conname as name, rn.nspname as ref_schema, r.relname as ref_table,
       array(
         select a.attname from unnest(k.conkey) with ordinality as u(attnum, ord)
         join pg_catalog.pg_attribute a on a.attrelid = k.conrelid and a.attnum = u.attnum
@@ -112,6 +118,7 @@ export async function checkSchema(sql: SqlHandle): Promise<SchemaFinding[]> {
     join pg_catalog.pg_class c on c.oid = k.conrelid
     join pg_catalog.pg_namespace n on n.oid = c.relnamespace
     join pg_catalog.pg_class r on r.oid = k.confrelid
+    join pg_catalog.pg_namespace rn on rn.oid = r.relnamespace
     where n.nspname = 'rebook' and k.contype = 'f'
     order by c.relname, k.conname
   `;
@@ -133,13 +140,15 @@ export async function checkSchema(sql: SqlHandle): Promise<SchemaFinding[]> {
 
   for (const fk of foreignKeys) {
     const [first] = fk.columns;
+    const single = fk.columns.length === 1;
     const toTenants =
-      fk.columns.length === 1 && first === 'tenant_id' && fk.ref_table === 'tenants';
+      single && first === 'tenant_id' && fk.ref_schema === 'rebook' && fk.ref_table === 'tenants';
+    const toAuthUser = single && fk.ref_schema === 'auth' && fk.ref_table === 'users';
     const composite = fk.columns.length > 1 && first === 'tenant_id';
-    if (!toTenants && !composite) {
+    if (!toTenants && !toAuthUser && !composite) {
       findings.push({
         table: fk.table,
-        problem: `foreign key ${fk.name} to ${fk.ref_table} (${fk.columns.join(', ')}) must be (tenant_id, …) → parent (tenant_id, id)`,
+        problem: `foreign key ${fk.name} to ${fk.ref_schema}.${fk.ref_table} (${fk.columns.join(', ')}) must be tenant_id → tenants(id), (tenant_id, …) → parent (tenant_id, id), or a user column → auth.users(id)`,
       });
     }
   }

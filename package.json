@@ -22,7 +22,10 @@
     "test:watch": "vitest --project unit",
     "test:integration": "vitest run --project integration",
     "test:e2e": "playwright test",
-    "check": "pnpm typecheck && pnpm lint && pnpm lint:deps && pnpm format:check && pnpm test",
+    "test:e2e:dev-smoke": "playwright test --config playwright.dev-smoke.config.ts",
+    "check": "pnpm typecheck && pnpm lint && pnpm lint:deps && pnpm format:check && pnpm check:secrets && pnpm check:migrations && pnpm test",
+    "check:secrets": "tsx scripts/check-src-secrets.ts",
+    "check:migrations": "tsx scripts/check-migrations-immutable.ts",
     "db:start": "supabase start && pnpm db:roles",
     "db:stop": "supabase stop",
     "db:status": "supabase status",
@@ -34,6 +37,8 @@
     "db:docs": "tsx scripts/generate-schema-doc.ts"
   },
   "dependencies": {
+    "@supabase/ssr": "0.12.7",
+    "@supabase/supabase-js": "2.118.0",
     "drizzle-orm": "0.45.4",
     "next": "16.4.3",
     "postgres": "3.4.9",

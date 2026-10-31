@@ -193,9 +193,9 @@ describe('CI workflow (Phase 0 criterion 5)', () => {
     .map((match) => match[1])
     .filter((id): id is string => id !== undefined);
 
-  it('runs on every pull request and on pushes to main', () => {
+  it('runs on every pull request and on pushes to master (the default branch)', () => {
     expect(workflow).toMatch(/^ {2}pull_request:\s*$/m);
-    expect(workflow).toMatch(/^ {2}push:\n {4}branches: \[main\]/m);
+    expect(workflow).toMatch(/^ {2}push:\n {4}branches: \[master\]/m);
   });
 
   it('exposes the single status check docs/setup.md tells Moses to require', () => {
@@ -214,20 +214,47 @@ describe('CI workflow (Phase 0 criterion 5)', () => {
     expect(needs).toEqual(jobIds.filter((id) => id !== 'ci-passed').sort());
   });
 
-  it('runs typecheck, lint, dependency rules, formatting, unit, integration and e2e tests', () => {
+  it('runs typecheck, lint, dependency rules, formatting, both Phase 2 checks, unit, integration and e2e tests', () => {
     const run = pnpmScriptsReferencedIn('.github/workflows/ci.yml');
     for (const script of [
       'typecheck',
       'lint',
       'lint:deps',
       'format:check',
+      'check:secrets',
+      'check:migrations',
       'test',
       'db:migrate',
+      'db:check-schema',
       'test:integration',
-      'build',
       'test:e2e',
+      'test:e2e:dev-smoke',
     ]) {
       expect(run).toContain(script);
     }
+  });
+
+  it('gates e2e on a fresh production build that Playwright starts itself on a dedicated port', () => {
+    const config = read('playwright.config.ts');
+    // The build runs inside webServer, so CI cannot test a stale build or a reused dev server.
+    expect(config).toMatch(
+      /command: `NODE_ENV=production pnpm build && NODE_ENV=test pnpm start --port \$\{PORT\}`/,
+    );
+    expect(config).toMatch(/const PORT = 3100;/);
+    expect(config).toMatch(/reuseExistingServer: false/);
+    expect(config).not.toMatch(/pnpm dev/);
+    expect(read('playwright.dev-smoke.config.ts')).toMatch(/reuseExistingServer: false/);
+  });
+
+  it('keeps the dev-server smoke run non-blocking and everything else blocking', () => {
+    const smokeStep = /- name: Dev-server smoke[^\n]*\n((?: {8}.*\n)+)/.exec(workflow)?.[1] ?? '';
+    expect(smokeStep).toMatch(/continue-on-error: true/);
+    expect(smokeStep).toMatch(/run: pnpm test:e2e:dev-smoke/);
+    expect(workflow.match(/continue-on-error/g)).toHaveLength(1);
+  });
+
+  it('compares migrations with the pull request base branch and fetches full history for it', () => {
+    expect(workflow).toMatch(/fetch-depth: 0/);
+    expect(workflow).toMatch(/format\('origin\/\{0\}', github\.base_ref\)/);
   });
 });

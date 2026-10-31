@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './helpers/fixtures';
 
 test('GET /health reports ok and is never cached', async ({ request }) => {
   const response = await request.get('/health');

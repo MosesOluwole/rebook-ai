@@ -1,5 +1,3 @@
-import { randomUUID } from 'node:crypto';
-
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -9,6 +7,7 @@ import { listRebookTables, type RebookTable } from '../../helpers/catalogue';
 import { connectAppDb, connectOwnerDb, type AppDb } from '../../helpers/db';
 import { expectSqlState, PERMISSION_DENIED } from '../../helpers/sql-state';
 import {
+  actorFor,
   contextFor,
   seedTenantPair,
   type SeededTenant,
@@ -16,7 +15,7 @@ import {
 } from '../../helpers/tenant-fixtures';
 
 /**
- * Extra isolation probes for the Phase 1 gate. They complement isolation.generated.test.ts with
+ * Extra isolation probes for the Phase 1 gate, extended in Phase 2. They complement isolation.generated.test.ts with
  * the cases that suite does not cover:
  *
  * - the same checks as rebook_worker (the policies name both runtime roles);
@@ -38,9 +37,11 @@ const touch: Readonly<Record<string, ReturnType<typeof sql>>> = {
   tenants: sql`name = 'touched'`,
   locations: sql`name = 'touched'`,
   tenant_memberships: sql`role = 'staff'`,
+  tenant_invitations: sql`role = 'staff'`,
   audit_logs: sql`action = 'touched.row'`,
   tenant_feature_flags: sql`enabled = false`,
   idempotency_keys: sql`request_hash = 'touched'`,
+  rate_limits: sql`count = 0`,
 };
 
 /** Plain-SQL twin of `touch` for statements issued through postgres.js rather than drizzle. */
@@ -48,9 +49,11 @@ const touchLiteral: Readonly<Record<string, string>> = {
   tenants: "name = 'touched'",
   locations: "name = 'touched'",
   tenant_memberships: "role = 'staff'",
+  tenant_invitations: "role = 'staff'",
   audit_logs: "action = 'touched.row'",
   tenant_feature_flags: 'enabled = false',
   idempotency_keys: "request_hash = 'touched'",
+  rate_limits: 'count = 0',
 };
 
 /** The seeded primary key of a tenant in each table that has an `id` column. */
@@ -59,6 +62,7 @@ function seededIdIn(table: string, seed: SeededTenant): string {
     tenants: seed.id,
     locations: seed.locationId,
     tenant_memberships: seed.membershipId,
+    tenant_invitations: seed.invitationId,
     audit_logs: seed.auditLogId,
     idempotency_keys: seed.idempotencyKeyId,
   };
@@ -77,7 +81,9 @@ function sampleInsert(table: string, seed: SeededTenant): ReturnType<typeof sql>
     case 'locations':
       return sql`insert into rebook.locations (tenant_id, name, time_zone) values (${seed.id}, 'Probe', 'Europe/London')`;
     case 'tenant_memberships':
-      return sql`insert into rebook.tenant_memberships (tenant_id, user_id, role) values (${seed.id}, ${randomUUID()}, 'staff')`;
+      return sql`insert into rebook.tenant_memberships (tenant_id, user_id, role) values (${seed.id}, ${seed.spareUserId}, 'staff')`;
+    case 'tenant_invitations':
+      return sql`insert into rebook.tenant_invitations (tenant_id, email, role, token_hash, expires_at) values (${seed.id}, ${`worker-${seed.slug}@example.invalid`}, 'staff', ${'b'.repeat(64)}, now() + interval '1 minute')`;
     case 'audit_logs':
       return sql`insert into rebook.audit_logs (tenant_id, actor_kind, action, entity_type) values (${seed.id}, 'worker', 'probe.insert', 'probe')`;
     case 'tenant_feature_flags':
@@ -129,8 +135,28 @@ describe('catalogue coverage (probes)', () => {
     }
   });
 
-  it('gives rebook_worker exactly the same privileges as rebook_app in Phase 1', () => {
-    expect(workerTables).toEqual(appTables);
+  it('grants each runtime role exactly the privileges the design gives it', () => {
+    const all = ['SELECT', 'INSERT', 'UPDATE', 'DELETE'];
+    const expected: Record<string, { app: string[]; worker: string[] }> = {
+      audit_logs: { app: ['SELECT', 'INSERT'], worker: ['SELECT', 'INSERT'] },
+      idempotency_keys: { app: all, worker: all },
+      locations: { app: all, worker: all },
+      tenant_feature_flags: { app: all, worker: all },
+      // Invitations are created, accepted and revoked by the app; the worker only reads them
+      // (invitation emails, Phase 6). Nothing deletes them.
+      tenant_invitations: { app: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT'] },
+      tenant_memberships: { app: all, worker: all },
+      // Owners edit business settings (Phase 2); jobs never do. Nobody deletes a tenant.
+      tenants: { app: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'INSERT'] },
+      // Platform-level counters for rate limiting (no tenant_id): the app alone, incl. sweeping.
+      rate_limits: { app: all, worker: [] },
+    };
+    expect(Object.fromEntries(appTables.map((t) => [t.table, t.appPrivileges]))).toEqual(
+      Object.fromEntries(Object.entries(expected).map(([table, p]) => [table, p.app])),
+    );
+    expect(Object.fromEntries(workerTables.map((t) => [t.table, t.appPrivileges]))).toEqual(
+      Object.fromEntries(Object.entries(expected).map(([table, p]) => [table, p.worker])),
+    );
   });
 });
 
@@ -259,10 +285,11 @@ describe('a user with memberships in both tenants, acting in tenant A', () => {
     membershipInB = row.id;
   });
 
-  const asUserInA = () => contextFor(pair.a.id, { actorId: pair.a.userId });
+  // The production path: slug plus active membership → AuthorisedTenantContext.
+  const asUserInA = () => app.tenancy.resolveTenantForUser(pair.a.slug, actorFor(pair.a));
 
   it('can see its own tenant B membership (so Phase 2 can list a user tenants)', async () => {
-    const rows = await app.tenancy.withTenant(asUserInA(), (tx) =>
+    const rows = await app.tenancy.withTenant(await asUserInA(), (tx) =>
       tx.db.execute<{ tenant_id: string }>(
         sql`select tenant_id from rebook.tenant_memberships where id = ${membershipInB}`,
       ),
@@ -271,14 +298,14 @@ describe('a user with memberships in both tenants, acting in tenant A', () => {
   });
 
   it('updates zero rows when it tries to promote or revoke that tenant B membership', async () => {
-    const promoted = await app.tenancy.withTenant(asUserInA(), (tx) =>
+    const promoted = await app.tenancy.withTenant(await asUserInA(), (tx) =>
       tx.db.execute(
         sql`update rebook.tenant_memberships set role = 'owner' where id = ${membershipInB} returning 1`,
       ),
     );
     expect(promoted).toHaveLength(0);
 
-    const revoked = await app.tenancy.withTenant(asUserInA(), (tx) =>
+    const revoked = await app.tenancy.withTenant(await asUserInA(), (tx) =>
       tx.db.execute(
         sql`update rebook.tenant_memberships set revoked_at = now() where user_id = ${pair.a.userId} and tenant_id = ${pair.b.id} returning 1`,
       ),
@@ -286,7 +313,7 @@ describe('a user with memberships in both tenants, acting in tenant A', () => {
     expect(revoked).toHaveLength(0);
 
     const stillStaff = await app.tenancy.withTenant(
-      contextFor(pair.b.id, { actorId: pair.a.userId }),
+      await app.tenancy.resolveTenantForUser(pair.b.slug, actorFor(pair.a)),
       (tx) =>
         tx.db.execute<{ role: string; revoked_at: string | null }>(
           sql`select role, revoked_at from rebook.tenant_memberships where id = ${membershipInB}`,
@@ -296,7 +323,7 @@ describe('a user with memberships in both tenants, acting in tenant A', () => {
   });
 
   it('deletes zero rows when it tries to delete that tenant B membership', async () => {
-    const rows = await app.tenancy.withTenant(asUserInA(), (tx) =>
+    const rows = await app.tenancy.withTenant(await asUserInA(), (tx) =>
       tx.db.execute(
         sql`delete from rebook.tenant_memberships where id = ${membershipInB} returning 1`,
       ),
@@ -306,9 +333,9 @@ describe('a user with memberships in both tenants, acting in tenant A', () => {
 
   it('cannot insert a membership into tenant B for anyone', async () => {
     await expectSqlState(
-      app.tenancy.withTenant(asUserInA(), (tx) =>
+      app.tenancy.withTenant(await asUserInA(), (tx) =>
         tx.db.execute(
-          sql`insert into rebook.tenant_memberships (tenant_id, user_id, role) values (${pair.b.id}, ${randomUUID()}, 'owner')`,
+          sql`insert into rebook.tenant_memberships (tenant_id, user_id, role) values (${pair.b.id}, ${pair.a.spareUserId}, 'owner')`,
         ),
       ),
       PERMISSION_DENIED,
@@ -316,12 +343,27 @@ describe('a user with memberships in both tenants, acting in tenant A', () => {
   });
 
   it('sees no other user of tenant B', async () => {
-    const rows = await app.tenancy.withTenant(asUserInA(), (tx) =>
+    const rows = await app.tenancy.withTenant(await asUserInA(), (tx) =>
       tx.db.execute<{ user_id: string }>(
         sql`select user_id from rebook.tenant_memberships where tenant_id = ${pair.b.id}`,
       ),
     );
     expect(rows.map((row) => row.user_id)).toEqual([pair.a.userId]);
+  });
+
+  it('sees only tenant A row inside tenant A context, even though it is a member of B', async () => {
+    // Phase 2: the member branch of the tenants policy applies only while no tenant is set
+    // (the switcher's user context); inside a tenant context the current tenant is all there is.
+    const rows = await app.tenancy.withTenant(await asUserInA(), (tx) =>
+      tx.db.execute<{ id: string }>(sql`select id from rebook.tenants order by id`),
+    );
+    expect(rows.map((row) => row.id)).toEqual([pair.a.id]);
+
+    const stranger = await app.tenancy.withTenant(
+      await app.tenancy.resolveTenantForUser(pair.b.slug, actorFor(pair.b)),
+      (tx) => tx.db.execute<{ id: string }>(sql`select id from rebook.tenants`),
+    );
+    expect(stranger.map((row) => row.id)).toEqual([pair.b.id]);
   });
 });
 
@@ -337,7 +379,11 @@ describe('a brand-new connection with no context ever installed', () => {
       });
       expect(state?.never_set).toBe(true);
 
-      for (const { table } of appTables) {
+      // Every tenant-scoped table (tenants included). Platform tables without tenant_id
+      // (rate_limits) are readable by design and are covered by the platform tests.
+      const tenantScoped = appTables.filter((t) => t.hasTenantId || t.table === 'tenants');
+      expect(tenantScoped.length).toBe(appTables.length - 1);
+      for (const { table } of tenantScoped) {
         const [row] = await fresh.client.sql.begin(async (tx) => {
           await tx`set local role rebook_app`;
           return tx<{ n: number }[]>`select count(*)::int as n from rebook.${tx(table)}`;

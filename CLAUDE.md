@@ -35,24 +35,26 @@ Where code and these documents disagree, the documents win and the code is a fin
 Node 24 (`.nvmrc`) and pnpm 11 (`packageManager`, via `corepack enable`). All commands are pnpm
 scripts; see `docs/setup.md` for first-time setup.
 
-| Command                  | What it does                                                          |
-| ------------------------ | --------------------------------------------------------------------- |
-| `pnpm dev`               | Next.js dev server on http://localhost:3000 (`/health` is the probe)  |
-| `pnpm typecheck`         | `next typegen` then `tsc --noEmit`                                    |
-| `pnpm lint`              | ESLint (typescript-eslint strict, type-aware), zero warnings allowed  |
-| `pnpm lint:deps`         | dependency-cruiser module-boundary rules                              |
-| `pnpm format` / `:check` | Prettier                                                              |
-| `pnpm test`              | Vitest unit project (pure, no database)                               |
-| `pnpm test:integration`  | Vitest integration project against the local Supabase Postgres        |
-| `pnpm test:e2e`          | Playwright, desktop and 375 px projects                               |
-| `pnpm check`             | typecheck, lint, lint:deps, format:check, unit tests                  |
-| `pnpm db:start/stop`     | Local Supabase stack (`supabase start` / `stop`)                      |
-| `pnpm db:migrate`        | Apply pending migrations (`supabase migration up`)                    |
-| `pnpm db:reset`          | Recreate the local database from migrations and seed                  |
-| `pnpm db:generate`       | Generate a migration from the Drizzle schema (`drizzle-kit generate`) |
-| `pnpm db:roles`          | Set the local `rebook_authenticator` password from `APP_DATABASE_URL` |
-| `pnpm db:check-schema`   | Tenant-isolation check on every `rebook` table (CI)                   |
-| `pnpm db:docs`           | Regenerate `docs/schema.md` from the catalogue (`--check` in CI)      |
+| Command                  | What it does                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------- |
+| `pnpm dev`               | Next.js dev server on http://localhost:3000 (`/health` is the probe)                  |
+| `pnpm typecheck`         | `next typegen` then `tsc --noEmit`                                                    |
+| `pnpm lint`              | ESLint (typescript-eslint strict, type-aware), zero warnings allowed                  |
+| `pnpm lint:deps`         | dependency-cruiser module-boundary rules                                              |
+| `pnpm format` / `:check` | Prettier                                                                              |
+| `pnpm test`              | Vitest unit project (pure, no database)                                               |
+| `pnpm test:integration`  | Vitest integration project against the local Supabase Postgres                        |
+| `pnpm test:e2e`          | Playwright, desktop and 375 px projects                                               |
+| `pnpm check`             | typecheck, lint, lint:deps, format:check, check:secrets, check:migrations, unit tests |
+| `pnpm check:secrets`     | Fail if `src/` references the Supabase admin key, secret key or JWT secret            |
+| `pnpm check:migrations`  | Fail if a migration already on `origin/master` was modified, renamed or deleted       |
+| `pnpm db:start/stop`     | Local Supabase stack (`supabase start` / `stop`)                                      |
+| `pnpm db:migrate`        | Apply pending migrations (`supabase migration up`)                                    |
+| `pnpm db:reset`          | Recreate the local database from migrations and seed                                  |
+| `pnpm db:generate`       | Generate a migration from the Drizzle schema (`drizzle-kit generate`)                 |
+| `pnpm db:roles`          | Set the local `rebook_authenticator` password from `APP_DATABASE_URL`                 |
+| `pnpm db:check-schema`   | Tenant-isolation check on every `rebook` table (CI)                                   |
+| `pnpm db:docs`           | Regenerate `docs/schema.md` from the catalogue (`--check` in CI)                      |
 
 ## Code layout and boundaries
 
@@ -68,7 +70,11 @@ src/shared/config/env.ts      The only place that reads app configuration from p
                               getEnv() is server-only. APP_DATABASE_URL is the app's connection;
                               DATABASE_URL is the owner connection for tooling and fixtures only.
 src/shared/db/client.ts       The only place a Postgres connection is created.
-src/modules/tenancy/          withTenant, TenantTx, the tenant context and the core tenant-owned tables.
+src/shared/auth/supabase.ts   The only place a Supabase client is created (Auth API only, server-side, cookies).
+src/proxy.ts                  Next 16 request interceptor: refreshes the session, short-circuits signed-out requests.
+src/app/_lib/                 Request-scoped helpers for routes: services singleton, currentUser(), requireUser().
+src/modules/tenancy/          Identity, withTenant/withUserContext, TenantTx/UserTx, AuthorisedTenantContext,
+                              permissions, onboarding, invitations and the core tenant-owned tables.
 src/shared/kernel/            Pure ports and types any module may use (e.g. Clock).
 tests/unit, tests/integration, tests/e2e, tests/helpers, tests/fixtures
 supabase/migrations/          SQL migrations, applied by the Supabase CLI.
@@ -80,8 +86,9 @@ module's domain and `src/shared/kernel`; `src/shared` never imports modules; no 
 files under `src` (a file with no imports in or out); no devDependencies in shipped code. Rules live in `.dependency-cruiser.cjs` and are
 proven by `tests/unit/dependency-rules.test.ts`. `src/modules/platform` is the reference module.
 
-Modules planned by the design (§3): booking, crm, messaging, ai, analytics, plus tenancy (Phase 1)
-and platform (health and operations). Create a module only when its phase needs it.
+Modules planned by the design (§3): booking, crm, messaging, ai, analytics, plus tenancy (Phases 1
+and 2: tenant context, identity, authorisation) and platform (health and operations). Create a
+module only when its phase needs it.
 
 ## Coding standards
 
@@ -101,7 +108,16 @@ and platform (health and operations). Create a module only when its phase needs 
   repository function takes the branded `TenantTx` it provides. Never query `rebook` tables with
   a bare database handle, never connect as the owner at runtime, and never read `tenant_id` from
   a request body, header, query string or job payload without re-verifying it.
-- Tables: all in the `rebook` schema (never `public`). Every tenant-owned table has
+- Identity and authorisation (ADR-004): the user comes from `currentUser()` (verified with
+  Supabase on every request), never from the cookie payload. A user enters a tenant only through
+  `resolveTenantForUser(slug, actor)`, which returns the branded `AuthorisedTenantContext` that
+  `withTenant` requires for user actors; never build a user context from a URL or form. Before a
+  tenant is chosen use `withUserContext`, whose `UserTx` is accepted only by "list my memberships"; `withAnonymousContext` (no tenant, no user) reaches platform tables only (`rate_limits`). Public form posts that must answer 429 or 403 are route handlers with `rejectCrossOrigin`, rate limited through `rateLimitOrNull` before any credential check. Every application command starts with `assertPermission(tx, permission)`
+  (`can(role, permission)` in `domain/permissions.ts`); owner-only commands are tested as staff.
+  The Supabase admin key and JWT secret are never used or configured (`pnpm check:secrets`).
+- Time zones: canonicalised with `canonicalTimeZone` (Intl) at every boundary before they are
+  stored (ADR-003); never store a zone as the user typed it.
+- Tables: all in the `rebook` schema (never `public`). Platform-level tables without `tenant_id` (`rate_limits`) are the exception and must be allow-listed in `scripts/lib/schema-check.ts` with a reason. Every tenant-owned table has
   `tenant_id uuid not null`, `unique (tenant_id, id)`, RLS enabled and forced, policies comparing
   against `(select nullif(current_setting('app.tenant_id', true), '')::uuid)`, grants only to
   `rebook_app`/`rebook_worker`, and children reference parents as
@@ -110,8 +126,11 @@ and platform (health and operations). Create a module only when its phase needs 
   `tests/helpers/tenant-fixtures.ts`, run `pnpm db:check-schema` and `pnpm db:docs`.
 - Migrations are generated into `supabase/migrations` by `pnpm db:generate` for table DDL
   (hand-written SQL for roles, policies, grants, functions: `pnpm db:generate --custom
---name=<what>`), applied only by the Supabase CLI, forward-only, expand then contract. No
-  passwords or secrets in migrations.
+--name=<what>`), applied only by the Supabase CLI, forward-only, expand then contract. A
+  migration that exists on `master` is never edited, renamed or deleted (`pnpm check:migrations`
+  fails CI); change the schema with a new migration. No passwords or secrets in migrations.
+  Foreign keys are `tenant_id → tenants(id)`, composite on `tenant_id`, or a user column →
+  `auth.users(id)`; nothing else.
 - Next.js: `cacheComponents` is off (tenant data must never be cached across requests); route
   handlers that must reflect live state export `dynamic = 'force-dynamic'`.
 - Formatting is Prettier's; do not fight it. Run `pnpm check` before asking for review.
@@ -122,10 +141,14 @@ and platform (health and operations). Create a module only when its phase needs 
 - Integration tests in `tests/integration` run against the real local Postgres through
   `tests/helpers/db.ts`: `connectAppDb()` (as `rebook_authenticator`, through `withTenant`) for
   every behaviour under test, `connectOwnerDb()` only for catalogue checks and the owner-only
-  fixtures in `tests/helpers/tenant-fixtures.ts`. Never mock the database for RLS, isolation,
-  constraints, idempotency, triggers or concurrency. Never assert behaviour as the owner.
-- E2E tests in `tests/e2e` run in both Playwright projects (desktop and 375 px). No retries: a
-  flaky test is a failing test.
+  fixtures in `tests/helpers/tenant-fixtures.ts` (which also create the Supabase Auth users that
+  memberships reference). User contexts in tests come from
+  `tenancy.resolveTenantForUser(slug, actorFor(seed))`, the production path; `contextFor()` is
+  for non-user actors. Never mock the database for RLS, isolation, constraints, idempotency,
+  triggers or concurrency. Never assert behaviour as the owner.
+- E2E tests in `tests/e2e` run in both Playwright projects (desktop and 375 px) against the local
+  stack with Supabase Auth and Mailpit (`tests/e2e/helpers/mailpit.ts` reads sign-in links). No
+  retries: a flaky test is a failing test.
 - Never skip, `.only`, loosen or delete an assertion to get green. Fixtures are synthetic.
 
 ## Working with the agents

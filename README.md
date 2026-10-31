@@ -17,5 +17,7 @@ nvm install && corepack enable
 pnpm install
 cp .env.example .env
 pnpm db:start     # supabase start + pnpm db:roles
-pnpm dev          # http://localhost:3000/health
+pnpm dev          # http://localhost:3000 → sign up, create a business
 ```
+
+Sign-in link emails from the local stack land in Mailpit at http://127.0.0.1:54324.

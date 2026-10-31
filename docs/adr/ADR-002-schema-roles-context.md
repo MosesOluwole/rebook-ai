@@ -1,6 +1,6 @@
 # ADR-002: Application schema, database roles and request context
 
-- **Status:** Proposed (Phase 1). Becomes Accepted when Moses commits Phase 1.
+- **Status:** Accepted (Phase 1 merged 30 Oct 2026). Extended by ADR-003 (time zones) and ADR-004 (identity, user context, authorised tenant context) in Phase 2.
 - **Date:** 2026-10-29
 - **Deciders:** Moses Oluwole (owner); drafted by Claude Code during Phase 1.
 - **Source design:** `docs/architecture.md` §4 (tenancy, identity, authorisation) and §5 (data
@@ -74,8 +74,8 @@ everywhere. Every tenant-owned table with an `id` has `unique (tenant_id, id)` s
 reference it as `(tenant_id, parent_id) → parent (tenant_id, id)`; `tenant_feature_flags` is
 keyed by `(tenant_id, flag)` instead, because a flag has no identity beyond its name.
 Time zones are checked by `rebook.is_time_zone()`: an Area/Location name or `UTC` known to
-`pg_timezone_names` (abbreviations such as `EST` are rejected); the app applies the same rule
-before the database does. Indexes cover the two Phase 1 query paths beyond primary keys:
+`pg_timezone_names` (abbreviations such as `EST` are rejected); the app canonicalises input with
+Intl before the database sees it (ADR-003). Indexes cover the two Phase 1 query paths beyond primary keys:
 `audit_logs (tenant_id, created_at desc)` and `tenant_memberships (user_id)`.
 
 Phase 1 has no table with a composite child key yet (the first arrive with services and team
@@ -92,8 +92,8 @@ delete policy or privilege yet. `tenant_memberships`: a tenant manages its rows,
 sees rows where `user_id` is the current actor, so Phase 2 can list a signed-in user's tenants.
 Every other table: one policy for all commands on `tenant_id`. `audit_logs`: INSERT and SELECT
 only for runtime roles, so it is append-only. Feature flags are toggled only through
-`setFeatureFlag`, which writes the audit entry (before and after) in the same transaction; the
-raw repository is not exported. All of this is hand-written SQL in
+`toggleFeatureFlag` (owner-only since Phase 2), which writes the audit entry (before and after)
+in the same transaction; the raw repository is not exported. All of this is hand-written SQL in
 `supabase/migrations`; Drizzle Kit generates only the table DDL (see ADR-001 for the single
 applier).
 
@@ -124,7 +124,9 @@ clearly labelled owner-only file.
 - Costs: every query runs inside a transaction (negligible at MVP load, as the design notes);
   two connection strings to manage; `pnpm db:roles` is an extra local step after a fresh
   `supabase start` or `db reset` (wired into `pnpm db:start` and `pnpm db:reset`).
-- Revisit when: Phase 2 decides whether `tenant_memberships.user_id` gets a foreign key into
-  `auth.users` and whether the `tenant_memberships` select policy should match `user_id` only
-  for `actor_kind = 'user'` (today it matches any actor id, as the spec words it); Phase 6 narrows `rebook_worker`; support access grants give `rebook_platform`
+- Resolved in Phase 2 (new migrations, ADR-004): `tenant_memberships.user_id` references
+  `auth.users(id) on delete cascade`, and the memberships select policy's actor branch applies to
+  `actor_kind = 'user'` only. The schema check accepts a single-column key to `auth.users(id)`
+  as the one non-tenant parent.
+- Revisit when: Phase 6 narrows `rebook_worker`; support access grants give `rebook_platform`
   its policies; Postgres 18's built-in `uuidv7()` becomes available on Supabase.
