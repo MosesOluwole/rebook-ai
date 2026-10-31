@@ -22,9 +22,9 @@ env:
   # Supabase Auth of the local stack. The publishable (anon) key is the CLI's fixed demo key; the
   # e2e job re-reads it from `supabase status` in case the CLI ever changes it.
   SUPABASE_URL: http://127.0.0.1:54321
-  # Rate limits key on the client IP from this header; Playwright sets it per run (and per test
-  # where a test exercises the limit).
-  CLIENT_IP_HEADER: x-forwarded-for
+  # The app's public origin, the base of every outbound link. Playwright's gate server overrides
+  # it with its own origin (playwright.config.ts).
+  APP_ORIGIN: http://localhost:3000
   SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
 
 jobs:
@@ -86,7 +86,7 @@ jobs:
       - run: pnpm test:integration
 
   e2e:
-    name: Build and end-to-end tests
+    name: Production build and end-to-end tests
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -109,8 +109,14 @@ jobs:
           key="$(pnpm exec supabase status -o env | sed -n 's/^PUBLISHABLE_KEY="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p')"
           if [ -z "$key" ]; then echo "::error::supabase status did not report PUBLISHABLE_KEY"; exit 1; fi
           echo "SUPABASE_PUBLISHABLE_KEY=$key" >> "$GITHUB_ENV"
-      - run: pnpm build
-      - run: pnpm test:e2e
+      - name: End-to-end gate against a fresh production build
+        # Playwright runs `pnpm build`, then `next start` on port 3100 with NODE_ENV=test; it never
+        # reuses an existing server (playwright.config.ts).
+        run: pnpm test:e2e
+      - name: Dev-server smoke (non-blocking)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: pnpm test:e2e:dev-smoke
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:

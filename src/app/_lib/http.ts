@@ -1,35 +1,6 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-/**
- * The site's origin as the browser sees it. In Next's Node server `request.nextUrl` is built
- * from the listen hostname, so behind a reverse proxy it says `localhost`; the browser's view
- * comes from the proxy's `x-forwarded-host`/`x-forwarded-proto`, or from `host` when the app is
- * reached directly (local dev, CI). This is the same source Next's own server-action origin
- * check uses (docs/adr/ADR-004 §9).
- */
-export function siteOrigin(request: NextRequest): string {
-  // A blank forwarded host (a misconfigured proxy) falls back to Host rather than failing every
-  // post; a missing or unusable host falls back to the listen address, which fails closed.
-  const host =
-    firstValue(request.headers.get('x-forwarded-host')) ?? firstValue(request.headers.get('host'));
-  const proto =
-    firstValue(request.headers.get('x-forwarded-proto')) ??
-    request.nextUrl.protocol.replace(/:$/, '');
-  if (host === undefined) {
-    return request.nextUrl.origin;
-  }
-  try {
-    // Normalised like the browser's Origin: lower-case host, default port dropped (`:443`).
-    return new URL(`${proto}://${host}`).origin;
-  } catch {
-    return request.nextUrl.origin;
-  }
-}
-
-function firstValue(header: string | null): string | undefined {
-  const first = header?.split(',')[0]?.trim();
-  return first === undefined || first === '' ? undefined : first;
-}
+import { type Env, getEnv } from '@/shared/config/env';
 
 /**
  * A relative Location that is safe to put in a header: percent-encoded (header values must be
@@ -62,25 +33,52 @@ export function backToForm(path: string, params: Readonly<Record<string, string>
   return seeOther(`${path}?${query.toString()}`);
 }
 
+const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'] as const;
+
+/**
+ * The origins a same-site form post may come from: APP_ORIGIN, and in development only, when
+ * APP_ORIGIN is itself a loopback address, the same scheme and port on the other loopback names
+ * (a developer may open http://127.0.0.1:3000 as readily as http://localhost:3000). Nothing here
+ * is read from the request (docs/adr/ADR-004 §9).
+ */
+export function allowedOrigins(env: Pick<Env, 'APP_ORIGIN' | 'NODE_ENV'>): ReadonlySet<string> {
+  const origins = new Set([env.APP_ORIGIN]);
+  const app = new URL(env.APP_ORIGIN);
+  if (
+    env.NODE_ENV === 'development' &&
+    (LOOPBACK_HOSTS as readonly string[]).includes(app.hostname)
+  ) {
+    for (const host of LOOPBACK_HOSTS) {
+      const variant = new URL(env.APP_ORIGIN);
+      variant.hostname = host;
+      origins.add(variant.origin);
+    }
+  }
+  return origins;
+}
+
 /**
  * Route handlers that accept form posts are not protected by React's server-action origin check,
- * so they check it themselves: the Origin header (or, failing that, the Referer) must be this
- * site as the browser sees it. Browsers always send one of the two on a form POST.
+ * so they check it themselves: the Origin header must be one of `allowedOrigins`. The Referer is
+ * consulted only when Origin is absent; a post with neither, or with `Origin: null`, is refused.
  */
 export function rejectCrossOrigin(request: NextRequest): NextResponse | null {
-  const origin = request.headers.get('origin') ?? refererOrigin(request.headers.get('referer'));
-  if (origin !== siteOrigin(request)) {
+  const header = request.headers.get('origin');
+  const origin = header === null ? originOf(request.headers.get('referer')) : originOf(header);
+  if (origin === null || !allowedOrigins(getEnv()).has(origin)) {
     return new NextResponse('Forbidden', { status: 403, headers: { 'cache-control': 'no-store' } });
   }
   return null;
 }
 
-function refererOrigin(referer: string | null): string | null {
-  if (referer === null) {
+/** The serialised origin of a URL-valued header, or null when absent, opaque or malformed. */
+function originOf(value: string | null): string | null {
+  if (value === null) {
     return null;
   }
   try {
-    return new URL(referer).origin;
+    const origin = new URL(value).origin;
+    return origin === 'null' ? null : origin;
   } catch {
     return null;
   }

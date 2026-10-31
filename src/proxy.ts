@@ -1,8 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 import { createAuthSession } from '@/modules/tenancy';
-
-import { siteOrigin } from './app/_lib/http';
+import { appUrl } from '@/shared/config/app-url';
 
 /**
  * Request interceptor (docs/adr/ADR-004-auth-sessions.md). Runs on the Node.js runtime before
@@ -50,14 +49,9 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
       return NextResponse.json({ error: 'unauthenticated' }, { status: 401 });
     }
     if (PROTECTED_PAGE_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
-      // The proxy layer insists on an absolute Location. It is built from the origin the browser
-      // used (forwarded host and proto, or Host), never from `request.nextUrl`, which carries the
-      // server's listen address behind a reverse proxy (ADR-004 §9).
-      const signIn = new URL(
-        `/sign-in?next=${encodeURIComponent(`${pathname}${search}`)}`,
-        siteOrigin(request),
-      );
-      // The host comes from forwarded headers, so the response must never be cached for others.
+      // The proxy layer insists on an absolute Location. It is built on the configured
+      // APP_ORIGIN, never on Host, X-Forwarded-* or `request.nextUrl` (ADR-004 §9).
+      const signIn = appUrl(`/sign-in?next=${encodeURIComponent(`${pathname}${search}`)}`);
       return NextResponse.redirect(signIn, { headers: { 'cache-control': 'no-store' } });
     }
   }

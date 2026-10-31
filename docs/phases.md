@@ -306,7 +306,10 @@ Privacy and legal work for the midwife pilot is parked by decision and must be r
 **Acceptance criteria.**
 
 - [ ] Both critical journeys pass against staging, then against production with test tenants, 3 consecutive runs each.
-- [ ] Full isolation suite passes against staging.
+- [ ] Full isolation suite passes against staging, connected through the Supabase transaction-mode pooler as `rebook_authenticator`.
+- [ ] With email confirmation enabled on staging, sign-up shows "check your email", the confirmation link signs the user in once, and a reused link is rejected.
+- [ ] A forged `X-Forwarded-For` and a forged `x-vercel-forwarded-for` sent through Vercel do not change the rate-limit key; the stored key matches the platform's value.
+- [ ] Invite and sign-in links generated on staging and production use `APP_ORIGIN`, and Supabase's Site URL matches it.
 - [ ] A forced error in production appears in Sentry within 1 minute with tenant and request IDs and no client personal data.
 - [ ] A restore from backup into staging completes and the restored data passes integrity checks; time taken is recorded.
 - [ ] Security headers verified with a scanner; `pnpm audit` has no high or critical findings.

@@ -5,7 +5,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 
 import { NotFoundError, revokeInvitation, revokeMember } from '@/modules/tenancy';
-import { getEnv } from '@/shared/config/env';
+import { appUrl } from '@/shared/config/app-url';
 
 import { formMessage, readString } from '../../../_lib/form-errors';
 import { getTenancy } from '../../../_lib/tenancy';
@@ -32,7 +32,8 @@ export async function createInviteAction(
         role: readString(formData, 'role'),
       }),
     );
-    const link = new URL(`/invite/${slug}/${token}`, getEnv().NEXT_PUBLIC_APP_URL).toString();
+    // On APP_ORIGIN whatever Host or X-Forwarded-Host this request carried (ADR-004 §9).
+    const link = appUrl(`/invite/${encodeURIComponent(slug)}/${encodeURIComponent(token)}`);
     // The page's server-rendered "Open invitations" list must show the new row without a reload.
     revalidatePath(`/app/${slug}/team`);
     return { status: 'ok', link, email: invitation.email };

@@ -1,13 +1,20 @@
 import { NextRequest } from 'next/server';
-import { describe, expect, it } from 'vitest';
-
-import { rejectCrossOrigin, seeOther, siteOrigin, tooManyRequests } from '@/app/_lib/http';
+import { describe, expect, it, vi } from 'vitest';
 
 /**
  * Phase 2 follow-up 5: the route handlers that answer 429 check their own origin (route handlers
- * sit outside React's server-action origin check) and the 429 response is generic.
+ * sit outside React's server-action origin check) and the 429 response is generic. The site is
+ * the configured APP_ORIGIN; NODE_ENV=test, so no loopback variants are added.
  */
 const SITE = 'http://localhost:3000';
+
+vi.stubEnv('NODE_ENV', 'test');
+vi.stubEnv('APP_DATABASE_URL', 'postgresql://rebook_authenticator:secret@127.0.0.1:54322/postgres');
+vi.stubEnv('SUPABASE_URL', 'http://127.0.0.1:54321');
+vi.stubEnv('SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_synthetic_value_for_tests');
+vi.stubEnv('APP_ORIGIN', SITE);
+
+const { rejectCrossOrigin, seeOther, tooManyRequests } = await import('@/app/_lib/http');
 
 function post(headers: Record<string, string>): NextRequest {
   return new NextRequest(`${SITE}/auth/password`, { method: 'POST', headers });
@@ -37,28 +44,8 @@ describe('rejectCrossOrigin', () => {
     expect(rejectCrossOrigin(post({ origin: 'https://localhost:3000' }))?.status).toBe(403);
   });
 
-  it('judges the site by the proxy headers, not by the listen address (ADR-004 §9)', () => {
-    // Behind a reverse proxy the Node server sees localhost; the browser sees the public host.
-    const proxied = {
-      host: 'localhost:3000',
-      'x-forwarded-host': 'app.example',
-      'x-forwarded-proto': 'https',
-    };
-    expect(siteOrigin(post(proxied))).toBe('https://app.example');
-    expect(rejectCrossOrigin(post({ ...proxied, origin: 'https://app.example' }))).toBeNull();
-    expect(rejectCrossOrigin(post({ ...proxied, origin: 'http://app.example' }))?.status).toBe(403);
-    expect(rejectCrossOrigin(post({ ...proxied, origin: 'https://evil.example' }))?.status).toBe(
-      403,
-    );
-    // A list of forwarded hosts (several proxies) uses the first, the one the browser used.
-    expect(siteOrigin(post({ ...proxied, 'x-forwarded-host': 'app.example, internal.lb' }))).toBe(
-      'https://app.example',
-    );
-    // Reached directly (local dev, CI): the Host header is the site.
-    expect(siteOrigin(post({ host: 'localhost:3100' }))).toBe('http://localhost:3100');
-    expect(
-      rejectCrossOrigin(post({ host: 'localhost:3100', origin: 'http://localhost:3100' })),
-    ).toBeNull();
+  it('accepts no loopback twin outside development', () => {
+    expect(rejectCrossOrigin(post({ origin: 'http://127.0.0.1:3000' }))?.status).toBe(403);
   });
 });
 
@@ -74,23 +61,6 @@ describe('seeOther', () => {
     expect(seeOther('/app/中').headers.get('location')).toBe('/app/%E4%B8%AD');
     expect(seeOther('/app/x y?q=ü').headers.get('location')).toBe('/app/x%20y?q=%C3%BC');
     expect(seeOther('//evil.example/app').headers.get('location')).toBe('/app');
-  });
-});
-
-describe('siteOrigin normalisation', () => {
-  it('drops a default port and lower-cases the host, as the browser Origin does', () => {
-    const proxied = { host: 'localhost:3000', 'x-forwarded-proto': 'https' };
-    expect(siteOrigin(post({ ...proxied, 'x-forwarded-host': 'app.example:443' }))).toBe(
-      'https://app.example',
-    );
-    expect(siteOrigin(post({ ...proxied, 'x-forwarded-host': 'App.Example' }))).toBe(
-      'https://app.example',
-    );
-    expect(
-      rejectCrossOrigin(
-        post({ ...proxied, 'x-forwarded-host': 'app.example:443', origin: 'https://app.example' }),
-      ),
-    ).toBeNull();
   });
 });
 

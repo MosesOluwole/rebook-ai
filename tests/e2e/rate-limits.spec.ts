@@ -1,4 +1,4 @@
-import { expect, freshIp, test } from './helpers/fixtures';
+import { expect, freshIp, TEST_CLIENT_IP_HEADER, test } from './helpers/fixtures';
 
 import { PASSWORD, signUp, uniqueEmail } from './helpers/accounts';
 
@@ -17,7 +17,7 @@ test('the sixth wrong password for one address is refused with 429, even from ne
   const origin = baseURL ?? '';
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     const context = await browser.newContext({
-      extraHTTPHeaders: { 'x-forwarded-for': freshIp(), origin },
+      extraHTTPHeaders: { [TEST_CLIENT_IP_HEADER]: freshIp(), origin },
     });
     const response = await context.request.post('/auth/password', {
       form: { email: address.toUpperCase(), password: 'wrong-password-here', next: '/app' },
@@ -41,7 +41,7 @@ test('the eleventh sign-in link request from one IP is refused with 429, whateve
   baseURL,
 }) => {
   const context = await browser.newContext({
-    extraHTTPHeaders: { 'x-forwarded-for': freshIp(), origin: baseURL ?? '' },
+    extraHTTPHeaders: { [TEST_CLIENT_IP_HEADER]: freshIp(), origin: baseURL ?? '' },
   });
   for (let attempt = 1; attempt <= 11; attempt += 1) {
     const response = await context.request.post('/auth/magic-link', {
@@ -59,7 +59,9 @@ test('the eleventh sign-in link request from one IP is refused with 429, whateve
 
 test('the refusal renders as a page when it comes from the sign-in form', async ({ browser }) => {
   const address = uniqueEmail('form');
-  const context = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': freshIp() } });
+  const context = await browser.newContext({
+    extraHTTPHeaders: { [TEST_CLIENT_IP_HEADER]: freshIp() },
+  });
   const page = await context.newPage();
   for (let attempt = 1; attempt <= 6; attempt += 1) {
     await page.goto('/sign-in');
@@ -90,7 +92,9 @@ test('a correct password is also refused once the address is over the limit', as
   await signUp(page, address);
   await page.getByRole('button', { name: 'Sign out' }).click();
 
-  const context = await browser.newContext({ extraHTTPHeaders: { 'x-forwarded-for': freshIp() } });
+  const context = await browser.newContext({
+    extraHTTPHeaders: { [TEST_CLIENT_IP_HEADER]: freshIp() },
+  });
   const origin = new URL(page.url()).origin;
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     const response = await context.request.post('/auth/password', {
@@ -134,7 +138,7 @@ test('the fourth sign-up attempt for one address within the hour is refused with
   const origin = baseURL ?? '';
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     const context = await browser.newContext({
-      extraHTTPHeaders: { 'x-forwarded-for': freshIp(), origin },
+      extraHTTPHeaders: { [TEST_CLIENT_IP_HEADER]: freshIp(), origin },
     });
     const response = await context.request.post('/auth/sign-up', {
       form: { email: ` ${address.toUpperCase()} `, password: 'short', next: '/app' },
@@ -212,7 +216,7 @@ test('the refusal page fits the viewport and leads back to sign-in', async ({ br
   const address = uniqueEmail('page429');
   const context = await browser.newContext({
     viewport: page.viewportSize(),
-    extraHTTPHeaders: { 'x-forwarded-for': freshIp() },
+    extraHTTPHeaders: { [TEST_CLIENT_IP_HEADER]: freshIp() },
   });
   const origin = new URL(
     page.url() === 'about:blank' ? ((await page.goto('/sign-in'))?.url() ?? '') : page.url(),

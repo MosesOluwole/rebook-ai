@@ -227,11 +227,30 @@ describe('CI workflow (Phase 0 criterion 5)', () => {
       'db:migrate',
       'db:check-schema',
       'test:integration',
-      'build',
       'test:e2e',
+      'test:e2e:dev-smoke',
     ]) {
       expect(run).toContain(script);
     }
+  });
+
+  it('gates e2e on a fresh production build that Playwright starts itself on a dedicated port', () => {
+    const config = read('playwright.config.ts');
+    // The build runs inside webServer, so CI cannot test a stale build or a reused dev server.
+    expect(config).toMatch(
+      /command: `NODE_ENV=production pnpm build && NODE_ENV=test pnpm start --port \$\{PORT\}`/,
+    );
+    expect(config).toMatch(/const PORT = 3100;/);
+    expect(config).toMatch(/reuseExistingServer: false/);
+    expect(config).not.toMatch(/pnpm dev/);
+    expect(read('playwright.dev-smoke.config.ts')).toMatch(/reuseExistingServer: false/);
+  });
+
+  it('keeps the dev-server smoke run non-blocking and everything else blocking', () => {
+    const smokeStep = /- name: Dev-server smoke[^\n]*\n((?: {8}.*\n)+)/.exec(workflow)?.[1] ?? '';
+    expect(smokeStep).toMatch(/continue-on-error: true/);
+    expect(smokeStep).toMatch(/run: pnpm test:e2e:dev-smoke/);
+    expect(workflow.match(/continue-on-error/g)).toHaveLength(1);
   });
 
   it('compares migrations with the pull request base branch and fetches full history for it', () => {

@@ -65,10 +65,9 @@ function bootNextDev(
     // Valid in every case here: the cases are about the database and public URL variables.
     SUPABASE_URL: 'http://127.0.0.1:54321',
     SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_synthetic_value_for_tests',
-    CLIENT_IP_HEADER: 'x-forwarded-for',
+    APP_ORIGIN: 'http://localhost:3000',
   };
   delete env.APP_DATABASE_URL;
-  delete env.NEXT_PUBLIC_APP_URL;
   for (const [name, value] of Object.entries(variables)) {
     if (value !== undefined) {
       env[name] = value;
@@ -166,7 +165,7 @@ describe('server start-up with an invalid environment (next dev)', () => {
   it('reports every problem at once, one line per variable', async () => {
     const result = await bootNextDev(
       appDir,
-      { APP_DATABASE_URL: '', NEXT_PUBLIC_APP_URL: 'ftp://not-a-web-origin' },
+      { APP_DATABASE_URL: '', APP_ORIGIN: 'ftp://not-a-web-origin' },
       await freePort(),
     );
 
@@ -174,6 +173,6 @@ describe('server start-up with an invalid environment (next dev)', () => {
     expect(result.code).toBe(1);
     expect(result.output).toMatch(/Invalid environment configuration \(2 problems\)/);
     expect(result.output).toMatch(/^ {2}- APP_DATABASE_URL: missing\./m);
-    expect(result.output).toMatch(/^ {2}- NEXT_PUBLIC_APP_URL: .*Expected public origin/m);
+    expect(result.output).toMatch(/^ {2}- APP_ORIGIN: .*Expected public origin/m);
   });
 });

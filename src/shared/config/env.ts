@@ -8,45 +8,73 @@ import { z } from 'zod';
  * application configuration from process.env. Add a variable by extending the schema and the
  * HINTS below, then .env.example and docs/setup.md.
  *
- * getEnv() must not be imported from client components: Next.js inlines only literal
- * `process.env.NEXT_PUBLIC_*` references into browser bundles, so a browser would see nothing
- * and validation would fail. NEXT_PUBLIC_* values are public; never put secrets in them.
+ * getEnv() must not be imported from client components: a browser bundle has no server
+ * environment, so validation would fail there. The app declares no NEXT_PUBLIC_* variable; any
+ * future one is public and inlined at build time, so never put a secret in it.
  */
 
 const postgresUrl = z.url({ protocol: /^postgres(?:ql)?$/ });
 
-const schema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  /**
-   * Runtime connection for the app: the `rebook_authenticator` login role, which holds no table
-   * privileges until `withTenant` switches to `rebook_app` or `rebook_worker` in a transaction.
-   */
-  APP_DATABASE_URL: postgresUrl,
-  /**
-   * Owner connection (Supabase's `postgres` role, the design's `rebook_owner`). Used only by
-   * migrations, Drizzle Kit, `pnpm db:roles` and test fixtures; the app never needs it, so it is
-   * optional here and tooling asks for it through getOwnerDatabaseUrl().
-   */
-  DATABASE_URL: postgresUrl.optional(),
-  /**
-   * Supabase Auth, reached only from the server (docs/adr/ADR-004-auth-sessions.md): the API
-   * gateway URL and the publishable (anon) key. The browser never receives either. The admin
-   * key and the JWT secret are never configured for this app (`pnpm check:secrets`).
-   */
-  SUPABASE_URL: z.url({ protocol: /^https?$/ }),
-  SUPABASE_PUBLISHABLE_KEY: z.string().trim().min(20),
-  /**
-   * The request header that carries the client IP, set by the trusted reverse proxy in front of
-   * the app (docs/adr/ADR-004-auth-sessions.md §9). Rate limits key on it. Required: without a
-   * trusted header the app cannot tell clients apart, so it refuses to start rather than guess.
-   */
-  CLIENT_IP_HEADER: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .regex(/^[a-z0-9-]{1,64}$/, 'a header name such as x-forwarded-for'),
-  NEXT_PUBLIC_APP_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:3000'),
-});
+const schema = z
+  .object({
+    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+    /**
+     * Runtime connection for the app: the `rebook_authenticator` login role, which holds no table
+     * privileges until `withTenant` switches to `rebook_app` or `rebook_worker` in a transaction.
+     */
+    APP_DATABASE_URL: postgresUrl,
+    /**
+     * Owner connection (Supabase's `postgres` role, the design's `rebook_owner`). Used only by
+     * migrations, Drizzle Kit, `pnpm db:roles` and test fixtures; the app never needs it, so it is
+     * optional here and tooling asks for it through getOwnerDatabaseUrl().
+     */
+    DATABASE_URL: postgresUrl.optional(),
+    /**
+     * Supabase Auth, reached only from the server (docs/adr/ADR-004-auth-sessions.md): the API
+     * gateway URL and the publishable (anon) key. The browser never receives either. The admin
+     * key and the JWT secret are never configured for this app (`pnpm check:secrets`).
+     */
+    SUPABASE_URL: z.url({ protocol: /^https?$/ }),
+    SUPABASE_PUBLISHABLE_KEY: z.string().trim().min(20),
+    /**
+     * The app's public origin (scheme, host, optional port), the only base for every link the app
+     * sends out: invitations now, sign-in and booking links later. Never derived from Host or
+     * X-Forwarded-* request headers, and the same-origin check on form posts is built from it
+     * (docs/adr/ADR-004-auth-sessions.md §9). Normalised as a browser would serialise it.
+     */
+    APP_ORIGIN: z
+      .url({ protocol: /^https?$/ })
+      .refine((value) => {
+        // An unparseable value is already reported by the url check; refinements still run.
+        if (!URL.canParse(value)) {
+          return true;
+        }
+        const url = new URL(value);
+        return (
+          url.pathname === '/' &&
+          url.search === '' &&
+          url.hash === '' &&
+          url.username === '' &&
+          url.password === ''
+        );
+      }, 'an origin only, without path, query, fragment or credentials')
+      .transform((value) => new URL(value).origin),
+    /**
+     * Set by Vercel on every deployment; never set by hand. Read only to refuse NODE_ENV=test there:
+     * that mode trusts a test-only client-IP header the client controls (ADR-004 §9).
+     */
+    VERCEL: z.string().optional(),
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'test' && env.VERCEL !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['NODE_ENV'],
+        message:
+          "'test' is for the local e2e gate only and must never run on Vercel (it trusts a test client-IP header)",
+      });
+    }
+  });
 
 export type Env = Readonly<z.infer<typeof schema>>;
 export type Environment = Env['NODE_ENV'];
@@ -64,9 +92,8 @@ const HINTS: Readonly<Record<EnvVariable, string>> = {
     'URL of the Supabase API gateway, e.g. http://127.0.0.1:54321 (API_URL in `pnpm db:status`)',
   SUPABASE_PUBLISHABLE_KEY:
     'the publishable or anon key of the Supabase project (PUBLISHABLE_KEY or ANON_KEY in `pnpm db:status`)',
-  CLIENT_IP_HEADER:
-    'the request header the trusted proxy sets to the client IP, e.g. x-forwarded-for locally or x-real-ip on the platform',
-  NEXT_PUBLIC_APP_URL: 'public origin of the web app, e.g. http://localhost:3000',
+  VERCEL: 'set by Vercel itself; leave it unset elsewhere',
+  APP_ORIGIN: 'public origin of the web app, e.g. http://localhost:3000 or https://app.example.com',
 };
 
 export interface EnvIssue {

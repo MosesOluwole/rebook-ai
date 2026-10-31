@@ -48,22 +48,23 @@ pnpm exec playwright install chromium
 
 ## Everyday commands
 
-| Command                 | Purpose                                                                                                                             |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm check`            | typecheck, lint, dependency rules, formatting, the secrets and migrations checks, unit tests                                        |
-| `pnpm check:secrets`    | fail if anything under `src/` references the Supabase admin key, secret key or JWT secret                                           |
-| `pnpm check:migrations` | fail if a migration that exists on `origin/master` was modified, renamed or deleted (`--base <ref>` to compare with something else) |
-| `pnpm test`             | unit tests (no database)                                                                                                            |
-| `pnpm test:integration` | integration tests against the local database (`pnpm db:start` first)                                                                |
-| `pnpm test:e2e`         | Playwright at desktop and 375 px; starts `pnpm dev` if nothing is on 3000                                                           |
-| `pnpm db:status`        | URLs and keys of the local stack                                                                                                    |
-| `pnpm db:migrate`       | apply pending migrations in `supabase/migrations`                                                                                   |
-| `pnpm db:reset`         | drop and recreate the local database from migrations and `supabase/seed.sql`, then `pnpm db:roles`                                  |
-| `pnpm db:roles`         | set the local `rebook_authenticator` password from `APP_DATABASE_URL` and verify login                                              |
-| `pnpm db:check-schema`  | tenant-isolation check on every `rebook` table (also run in CI)                                                                     |
-| `pnpm db:docs`          | regenerate the catalogue section of `docs/schema.md` (`--check` in CI)                                                              |
-| `pnpm db:generate`      | write a new migration from the Drizzle schema (`--custom --name=x` for hand-written SQL)                                            |
-| `pnpm db:stop`          | stop the local stack (data is kept)                                                                                                 |
+| Command                   | Purpose                                                                                                                             |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm check`              | typecheck, lint, dependency rules, formatting, the secrets and migrations checks, unit tests                                        |
+| `pnpm check:secrets`      | fail if anything under `src/` references the Supabase admin key, secret key or JWT secret                                           |
+| `pnpm check:migrations`   | fail if a migration that exists on `origin/master` was modified, renamed or deleted (`--base <ref>` to compare with something else) |
+| `pnpm test`               | unit tests (no database)                                                                                                            |
+| `pnpm test:integration`   | integration tests against the local database (`pnpm db:start` first)                                                                |
+| `pnpm test:e2e`           | the e2e gate: a fresh production build started on port 3100 by Playwright, desktop and 375 px                                       |
+| `pnpm test:e2e:dev-smoke` | non-blocking smoke run against `pnpm dev` on port 3200 (health and home page only)                                                  |
+| `pnpm db:status`          | URLs and keys of the local stack                                                                                                    |
+| `pnpm db:migrate`         | apply pending migrations in `supabase/migrations`                                                                                   |
+| `pnpm db:reset`           | drop and recreate the local database from migrations and `supabase/seed.sql`, then `pnpm db:roles`                                  |
+| `pnpm db:roles`           | set the local `rebook_authenticator` password from `APP_DATABASE_URL` and verify login                                              |
+| `pnpm db:check-schema`    | tenant-isolation check on every `rebook` table (also run in CI)                                                                     |
+| `pnpm db:docs`            | regenerate the catalogue section of `docs/schema.md` (`--check` in CI)                                                              |
+| `pnpm db:generate`        | write a new migration from the Drizzle schema (`--custom --name=x` for hand-written SQL)                                            |
+| `pnpm db:stop`            | stop the local stack (data is kept)                                                                                                 |
 
 ## The local stack
 
@@ -88,22 +89,32 @@ Declared and validated in `src/shared/config/env.ts`. The server validates them 
 (`src/instrumentation.ts`) and exits with a message naming each problem; tests and Drizzle Kit
 load `.env` the same way Next.js does.
 
-| Variable                   | Required | Purpose                                                                                                                                                     |
-| -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_DATABASE_URL`         | yes      | Runtime connection as `rebook_authenticator`; `withTenant` switches to a runtime role per transaction                                                       |
-| `DATABASE_URL`             | tooling  | Owner connection (Supabase `postgres`) for migrations, Drizzle Kit, `pnpm db:roles` and test fixtures. The app never reads it; leave it unset in production |
-| `SUPABASE_URL`             | yes      | Supabase API gateway, used by the server only (`API_URL` in `pnpm db:status`)                                                                               |
-| `SUPABASE_PUBLISHABLE_KEY` | yes      | The project's publishable or anon key (`PUBLISHABLE_KEY` / `ANON_KEY` in `pnpm db:status`). Public by design; the browser still never receives it           |
-| `CLIENT_IP_HEADER`         | yes      | Header the trusted reverse proxy sets to the client IP; rate limits key on it (`x-forwarded-for` locally and in CI, your platform's header in production)   |
-| `NEXT_PUBLIC_APP_URL`      | no       | Public origin of the app, used to build invite links; defaults to http://localhost:3000                                                                     |
-| `NODE_ENV`                 | no       | Set by Next.js and Vitest                                                                                                                                   |
+| Variable                   | Required | Purpose                                                                                                                                                                  |
+| -------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `APP_DATABASE_URL`         | yes      | Runtime connection as `rebook_authenticator`; `withTenant` switches to a runtime role per transaction                                                                    |
+| `DATABASE_URL`             | tooling  | Owner connection (Supabase `postgres`) for migrations, Drizzle Kit, `pnpm db:roles` and test fixtures. The app never reads it; leave it unset in production              |
+| `SUPABASE_URL`             | yes      | Supabase API gateway, used by the server only (`API_URL` in `pnpm db:status`)                                                                                            |
+| `SUPABASE_PUBLISHABLE_KEY` | yes      | The project's publishable or anon key (`PUBLISHABLE_KEY` / `ANON_KEY` in `pnpm db:status`). Public by design; the browser still never receives it                        |
+| `APP_ORIGIN`               | yes      | Public origin of the app (`http://localhost:3000` locally). The base of every outbound link and of the same-origin check on form posts; never taken from request headers |
+| `NODE_ENV`                 | no       | Set by Next.js and Vitest                                                                                                                                                |
 
-`CLIENT_IP_HEADER` must name a header the reverse proxy overwrites. Before deploying, send a
-request with a forged `x-forwarded-for` (or whatever you configure) through the platform and
-confirm the application saw the proxy's value, not yours; the same proxy must forward
-`x-forwarded-host` and `x-forwarded-proto`, which the form handlers use to verify the request's
-origin (ADR-004 §9). In production a missing or malformed header is logged once and all such
-requests share one rate-limit bucket.
+`APP_ORIGIN` must be exactly the origin users type (scheme, host, port; no path) and must equal
+the Supabase project's Site URL, which Supabase's own emails link to. Form posts whose `Origin`
+(or, without one, `Referer`) is not `APP_ORIGIN` are refused with 403; in development only,
+`127.0.0.1` and `[::1]` on the same port are accepted too when `APP_ORIGIN` is a loopback address.
+There is one `APP_ORIGIN` per deployment: a Vercel preview on its own unique URL refuses every form
+post (403) and sends signed-out visitors to `APP_ORIGIN`, so give previews their own `APP_ORIGIN`
+(a stable preview alias) before using them for sign-in. The e2e gate is the one deliberate
+exception to "Site URL equals `APP_ORIGIN`": it runs on 3100 while the local Supabase Site URL is
+3000, and `tests/e2e/helpers/mailpit.ts` rewrites email links to the gate's origin.
+
+The client IP for rate limits is not configurable. Production trusts Vercel's
+`x-vercel-forwarded-for`, the e2e gate (`NODE_ENV=test`) trusts the test header
+`x-rebook-test-client-ip`, and development trusts no header (ADR-004 §9). Before deploying, send a
+request with a forged `x-vercel-forwarded-for` through Vercel and confirm the app keyed on the
+platform's value; in production a missing or malformed header is logged once and all such requests
+share one rate-limit bucket. `CLIENT_IP_HEADER` and `NEXT_PUBLIC_APP_URL` from older `.env` files
+are ignored.
 
 The value of `SUPABASE_PUBLISHABLE_KEY` in `.env.example` and in CI is the Supabase CLI's fixed
 local demo anon key, the one `pnpm db:status` prints on every machine; it is public by design and
@@ -151,8 +162,10 @@ the platform secret store.
    `rebook_authenticator` password, runs the tenant-isolation schema check and the
    `docs/schema.md` freshness check, then `test:integration`.
 3. **e2e**: starts the local Supabase stack with Auth and Mailpit (`supabase start -x …` without
-   the services the app does not use), `next build`, then Playwright against `next start`; the
-   HTML report is uploaded on failure.
+   the services the app does not use), then `pnpm test:e2e`: Playwright builds the app fresh and
+   starts it with `next start` on port 3100 (`NODE_ENV=test`, `APP_ORIGIN=http://localhost:3100`,
+   never reusing a server). Then the dev-server smoke run (`pnpm test:e2e:dev-smoke`, port 3200),
+   which is `continue-on-error` and never blocks the job. The HTML report is uploaded on failure.
 4. **CI passed**: a single job that fails unless all three succeeded.
 
 To make CI block merges, require the `CI passed` check on `master`. With the GitHub CLI (replace
@@ -197,9 +210,12 @@ checks to pass before merging" → select **CI passed**.
   policy, has a foreign key that is not `tenant_id → tenants(id)` or composite on `tenant_id`, or
   something granted `anon`, `authenticated` or `service_role` a privilege. Fix the migration; never
   allow-list a tenant-owned table.
-- **`pnpm test:e2e` cannot start the server.** Something else is on port 3000, or `.env` is
-  missing. Playwright reuses a running `pnpm dev` locally. To test the production build while a
-  dev server is running: `pnpm build && CI=true PORT=3100 pnpm test:e2e`.
+- **`pnpm test:e2e` cannot start the server.** Port 3100 is taken (the gate never reuses a
+  running server, by design), `.env` is missing, or the build failed: the build output is in the
+  Playwright log. The gate runs `NODE_ENV=production pnpm build`, then `NODE_ENV=test pnpm start
+--port 3100` with `APP_ORIGIN=http://localhost:3100`; the production bundle is unchanged, only the
+  runtime mode differs, which is what lets the app trust the test client-IP header. A running
+  `pnpm dev` on port 3000 does not interfere. `pnpm test:e2e:dev-smoke` uses port 3200.
 - **Sign-in link emails never arrive.** They go to Mailpit (http://127.0.0.1:54324), not to a real
   inbox. If the link points at the wrong route, the templates were not loaded: `pnpm db:stop &&
 pnpm db:start`.
@@ -214,8 +230,8 @@ pnpm db:start`.
 - **Formatting or lint fails in CI only.** Run `pnpm format` and `pnpm lint` locally; CI treats
   warnings as errors.
 - **Sign-in says "Too many attempts".** The fixed-window limiter (ADR-004 §9) refused the
-  address or the client IP; wait for the window (minutes) or, locally, change the
-  `x-forwarded-for` header you send. Counters live in `rebook.rate_limits`.
+  address or the client IP; wait for the window (minutes). In development every request shares
+  one IP bucket (no header is trusted); the e2e gate sends `x-rebook-test-client-ip` per test. Counters live in `rebook.rate_limits`.
 - **After upgrading Next.js, back-office pages 500 on a token refresh.** `src/app/_lib/session.ts`
   recognises Next's render-time cookie error by its message text ("Cookies can only be modified
   in a Server Action or Route Handler", Next 16.4.3). Check the wording in the new version and

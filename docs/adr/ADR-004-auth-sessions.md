@@ -131,27 +131,50 @@ learn whether an address exists. The limits live in
 per 10 minutes, sign-up 20/IP and 3/address per hour, magic link 10/IP and 3/address per 10
 minutes, invite acceptance 30/IP and 10/address per 10 minutes.
 
-The client IP comes from one request header named by `CLIENT_IP_HEADER`, which must be the header
-the trusted reverse proxy in front of the app sets (locally `x-forwarded-for`, which nothing
-untrusted can reach; on the hosting platform its guaranteed header, for example `x-real-ip`).
+The client IP comes from exactly one request header, fixed in code per environment
+(`TRUSTED_CLIENT_IP_HEADER` in `src/app/_lib/client-ip.ts`), never from configuration:
+
+| `NODE_ENV`    | Trusted header            | Why                                                                                                                                   |
+| ------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `production`  | `x-vercel-forwarded-for`  | Set by Vercel's edge (ADR-001), which overwrites any client-supplied value. A client's `x-forwarded-for` is never read in production. |
+| `test`        | `x-rebook-test-client-ip` | Sent by Playwright so each e2e test is its own client. Only the e2e gate's server runs with `NODE_ENV=test`; a deployment never does. |
+| `development` | none                      | Nothing proxies the dev server; every request shares one IP bucket and the per-address limits still apply.                            |
+
 Only the first address of the header counts; a missing or malformed value lands in a shared
-`unknown` bucket rather than escaping the limit. The variable is required so the app refuses to
-start rather than guess.
+`unknown` bucket rather than escaping the limit, and in production the first such request logs a
+warning (without the value). Making the header configurable was rejected: one wrong setting
+(`x-forwarded-for` on a platform that appends to it) would let any client choose its own bucket.
+Vercel previews and staging also run with `NODE_ENV=production`, so they trust the same header.
+The environment refuses to validate when `NODE_ENV=test` and Vercel's `VERCEL` marker are both
+set, so the test header can never be trusted on the platform; elsewhere it rests on `NODE_ENV=test`
+being used only by the local e2e gate.
 
 To return a real 429, these four flows are route handlers (`/auth/password`, `/auth/magic-link`,
 `/auth/sign-up`, `/invite/[slug]/[token]/accept`) rather than server actions. Route handlers are
-not covered by React's server-action origin check, so each one verifies that the request's
-`Origin` (or `Referer`) is this site before reading the form (403 otherwise). "This site" is the
-origin the browser used: `x-forwarded-host` and `x-forwarded-proto` from the reverse proxy, or
-the `Host` header when the app is reached directly. It is never `request.nextUrl`, which Next's
-Node server builds from its listen address (`localhost` behind any proxy). For the same reason every redirect a route handler issues is path-relative (percent-encoded, never carrying a host), and the request interceptor's signed-out redirect, which Next requires to be absolute, is built from that same browser-side origin and marked uncacheable. Sign-out stays a server action.
+not covered by React's server-action origin check, so each one verifies the request's origin
+before reading the form (403 otherwise). The `Origin` header decides; the `Referer` is consulted
+only when `Origin` is absent, and a post with neither, or with `Origin: null`, is refused. The
+value is compared, as a serialised origin, with an allow-list built from the configured
+`APP_ORIGIN` (`allowedOrigins` in `src/app/_lib/http.ts`): `APP_ORIGIN` alone in production and
+test, plus, in development only and only when `APP_ORIGIN` is a loopback address, the same scheme
+and port on `localhost`, `127.0.0.1` and `[::1]`. `Host`, `X-Forwarded-Host`,
+`X-Forwarded-Proto` and `request.nextUrl` are never read for this: each is either client-controlled
+when the server is reached directly or the server's listen address behind a proxy.
+
+Outbound links (invitation links now; sign-in and booking links later) are built by `appUrl()`
+(`src/shared/config/app-url.ts`) on the same `APP_ORIGIN`, never on a request header, so a
+spoofed `Host` or `X-Forwarded-Host` cannot point a link at another site. Every redirect a route
+handler issues is path-relative (percent-encoded, never carrying a host); the request
+interceptor's signed-out redirect, which Next requires to be absolute, is built by `appUrl()` and
+marked uncacheable. Supabase's own emails use the project's Site URL, which must equal
+`APP_ORIGIN`. Sign-out stays a server action.
 
 Costs of the limits, stated plainly: a known address's password sign-in and magic link can be
 locked out by anyone for the length of a window (5 and 3 attempts per 10 minutes); the owner's
 recourse in the pilot is to wait, and support can clear the counters in `rebook.rate_limits`.
-Before Phase 9, verify on the hosting platform that the proxy overwrites (not appends to) the
-header named by `CLIENT_IP_HEADER` and forwards `x-forwarded-host`: send a request with a forged
-header and confirm the app saw the proxy's value.
+Before Phase 9, verify on Vercel that `x-vercel-forwarded-for` carries the caller's address and
+that a forged value sent by the client is replaced: send a request with a forged header and
+confirm the limiter keyed on the platform's value.
 
 ### 10. A health business stays a health business
 
@@ -190,8 +213,9 @@ same rule in the database as the backstop. It stops the owner role too: a delibe
   constraint names survive for error mapping; typed domain errors pass through untouched.
 - Costs: two verification calls per request (proxy and page); a `<select>` for time zones and a
   copy-the-link step for invitations until Phase 6; `getClaims()` on the local stack is a
-  network round trip because it signs with a shared secret; one more required variable (`CLIENT_IP_HEADER`) and one more transaction per sign-in attempt for the limiter.
-- Revisit when: the hosted project moves to asymmetric signing keys (then `getClaims()` verifies
+  network round trip because it signs with a shared secret; one more required variable (`APP_ORIGIN`, which must match the deployed URL and the Supabase Site URL) and one more transaction per sign-in attempt for the limiter; the trusted client-IP header ties production rate limiting to Vercel until this section is revised.
+- Revisit when: a CDN, WAF or proxy is placed in front of Vercel (`x-vercel-forwarded-for` would
+  then carry its address and every user would share one IP bucket), the hosted project moves to asymmetric signing keys (then `getClaims()` verifies
   locally), Phase 5 adds public pages (a third runner for `anonymous` actors around the same slug
   resolver), and Phase 6 sends invitation emails (the worker already holds SELECT on
   `tenant_invitations`).
