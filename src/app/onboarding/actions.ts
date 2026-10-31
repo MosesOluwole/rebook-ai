@@ -2,12 +2,16 @@
 
 import { redirect } from 'next/navigation';
 
-import { formMessage, readString } from '../_lib/form-errors';
+import { readString } from '../_lib/form-errors';
+import { failed, type FormState } from '../_lib/form-state';
 import { actorFor, requireUser } from '../_lib/session';
 import { getTenancy } from '../_lib/tenancy';
 
 /** Creates the business for the signed-in user and lands them in it. */
-export async function completeOnboardingAction(formData: FormData): Promise<void> {
+export async function completeOnboardingAction(
+  previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
   const user = await requireUser('/onboarding');
   let slug: string;
   try {
@@ -21,7 +25,7 @@ export async function completeOnboardingAction(formData: FormData): Promise<void
     );
     slug = tenant.slug;
   } catch (error) {
-    redirect(`/onboarding?error=${encodeURIComponent(formMessage(error))}`);
+    return failed(previous, formData, error);
   }
   redirect(`/app/${slug}`);
 }

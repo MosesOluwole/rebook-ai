@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { onboardingHooks } from '@/modules/booking';
 import {
   locationsRepository,
   membershipsRepository,
@@ -145,6 +146,7 @@ describe('concurrent onboarding with one business name', () => {
         },
       },
       slugSuffix: () => 'same',
+      hooks: onboardingHooks,
     };
     const input = { name, businessType: 'other_timed', timeZone: 'UTC' };
 

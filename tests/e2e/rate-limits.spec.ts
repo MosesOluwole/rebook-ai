@@ -24,8 +24,12 @@ test('the sixth wrong password for one address is refused with 429, even from ne
       maxRedirects: 0,
     });
     if (attempt <= 5) {
-      expect(response.status(), `attempt ${attempt}`).toBe(303);
-      expect(response.headers().location).toContain('/sign-in?error=');
+      // A plain form post gets a status-coded page; no message ever travels in a Location.
+      expect(response.status(), `attempt ${attempt}`).toBe(401);
+      expect(response.headers().location).toBeUndefined();
+      const body = await response.text();
+      expect(body).toContain('Incorrect email or password');
+      expect(body.toLowerCase()).not.toContain(address.toLowerCase());
     } else {
       expect(response.status()).toBe(429);
       expect(Number(response.headers()['retry-after'])).toBeGreaterThan(0);
@@ -49,7 +53,8 @@ test('the eleventh sign-in link request from one IP is refused with 429, whateve
       maxRedirects: 0,
     });
     if (attempt <= 10) {
-      expect(response.status(), `attempt ${attempt}`).toBe(303);
+      expect(response.status(), `attempt ${attempt}`).toBe(200);
+      expect(await response.text()).toContain('Check your email for a sign-in link');
     } else {
       expect(response.status()).toBe(429);
     }
@@ -57,7 +62,9 @@ test('the eleventh sign-in link request from one IP is refused with 429, whateve
   await context.close();
 });
 
-test('the refusal renders as a page when it comes from the sign-in form', async ({ browser }) => {
+test('the refusal shows in the sign-in form when it comes from the browser', async ({
+  browser,
+}) => {
   const address = uniqueEmail('form');
   const context = await browser.newContext({
     extraHTTPHeaders: { [TEST_CLIENT_IP_HEADER]: freshIp() },
@@ -75,11 +82,17 @@ test('the refusal renders as a page when it comes from the sign-in form', async 
       form.getByRole('button', { name: 'Sign in' }).click(),
     ]);
     if (attempt === 6) {
+      // The route still answers 429; the form shows the generic message as its own state.
       expect(response.status()).toBe(429);
-      await expect(page.getByRole('heading', { name: 'Too many attempts' })).toBeVisible();
+      await expect(form.locator('p[role="alert"]')).toHaveText(
+        'Too many attempts. Try again in a few minutes.',
+      );
     } else {
-      await expect(page.locator('p[role="alert"]')).toContainText('Incorrect email or password');
+      await expect(form.locator('p[role="alert"]')).toContainText('Incorrect email or password');
     }
+    // The address typed stays in the form; nothing goes in the URL.
+    await expect(form.getByLabel('Email')).toHaveValue(address);
+    expect(new URL(page.url()).search).toBe('');
   }
   await context.close();
 });
@@ -102,7 +115,7 @@ test('a correct password is also refused once the address is over the limit', as
       headers: { origin },
       maxRedirects: 0,
     });
-    expect(response.status()).toBe(303);
+    expect(response.status()).toBe(401);
   }
   const refused = await context.request.post('/auth/password', {
     form: { email: address, password: PASSWORD, next: '/app' },
@@ -145,8 +158,8 @@ test('the fourth sign-up attempt for one address within the hour is refused with
       maxRedirects: 0,
     });
     if (attempt <= 3) {
-      expect(response.status(), `attempt ${attempt}`).toBe(303);
-      expect(response.headers().location).toContain('/sign-up?error=');
+      expect(response.status(), `attempt ${attempt}`).toBe(400);
+      expect(response.headers().location).toBeUndefined();
     } else {
       expect(response.status()).toBe(429);
       const retryAfter = Number(response.headers()['retry-after']);
@@ -193,7 +206,7 @@ test('a same-site Referer is enough for a form post; neither Origin nor Referer 
     headers: { referer: `${origin}/sign-in` },
     maxRedirects: 0,
   });
-  expect(withReferer.status()).toBe(303);
+  expect(withReferer.status()).toBe(200);
 
   const bare = await request.post('/auth/magic-link', {
     form: { email: uniqueEmail('bare'), next: '/app' },
@@ -202,16 +215,37 @@ test('a same-site Referer is enough for a form post; neither Origin nor Referer 
   });
   expect(bare.status()).toBe(403);
 
-  // Signed out, the accept route is never reached: the proxy sends the request to sign-in first.
-  const signedOut = await request.post(`/invite/no-such-business/${'B'.repeat(43)}/accept`, {
+  // Since Phase 3 the proxy refuses a cross-origin POST before any session work (ADR-004 §9),
+  // so a foreign Origin gets 403 even signed out. From APP_ORIGIN, signed out, the accept route is
+  // still never reached: the proxy sends the request to sign-in first.
+  const acceptPath = `/invite/no-such-business/${'B'.repeat(43)}/accept`;
+  const foreign = await request.post(acceptPath, {
     headers: { origin: 'https://evil.example' },
     maxRedirects: 0,
   });
-  expect(signedOut.status()).toBe(307);
-  expect(signedOut.headers().location).toContain('/sign-in?next=');
+  expect(foreign.status()).toBe(403);
+  // Signed out, from APP_ORIGIN: the accept route itself sends the caller to sign in, back to the
+  // invite page (never to the POST-only accept path); as JSON for the form component.
+  const signedOut = await request.post(acceptPath, { headers: { origin }, maxRedirects: 0 });
+  expect(signedOut.status()).toBe(303);
+  expect(signedOut.headers().location).toBe(
+    `/sign-in?next=${encodeURIComponent(`/invite/no-such-business/${'B'.repeat(43)}`)}`,
+  );
+  const signedOutJson = await request.post(acceptPath, {
+    headers: { origin, accept: 'application/json' },
+    maxRedirects: 0,
+  });
+  expect(signedOutJson.status()).toBe(200);
+  expect(await signedOutJson.json()).toEqual({
+    ok: true,
+    redirect: `/sign-in?next=${encodeURIComponent(`/invite/no-such-business/${'B'.repeat(43)}`)}`,
+  });
 });
 
-test('the refusal page fits the viewport and leads back to sign-in', async ({ browser, page }) => {
+test('the refusal fits the viewport in the browser, and the plain-post page leads back to sign-in', async ({
+  browser,
+  page,
+}) => {
   // Same viewport as the running project (desktop or 375 px), a fresh client IP of its own.
   const address = uniqueEmail('page429');
   const context = await browser.newContext({
@@ -227,7 +261,7 @@ test('the refusal page fits the viewport and leads back to sign-in', async ({ br
       headers: { origin },
       maxRedirects: 0,
     });
-    expect(response.status(), `attempt ${attempt}`).toBe(303);
+    expect(response.status(), `attempt ${attempt}`).toBe(401);
   }
   const refused = await context.newPage();
   await refused.goto('/sign-in');
@@ -241,13 +275,28 @@ test('the refusal page fits the viewport and leads back to sign-in', async ({ br
     form.getByRole('button', { name: 'Sign in' }).click(),
   ]);
   expect(response.status()).toBe(429);
-  await expect(refused.getByRole('heading', { name: 'Too many attempts' })).toBeVisible();
-  await expect(refused.getByText('Try again in a few minutes.')).toBeVisible();
+  await expect(form.locator('p[role="alert"]')).toHaveText(
+    'Too many attempts. Try again in a few minutes.',
+  );
   const overflow = await refused.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
-  await refused.getByRole('link', { name: 'Back' }).click();
-  await expect(refused).toHaveURL(/\/sign-in$/);
+
+  // A plain (no-JavaScript) post gets the HTML page, which fits and leads back to sign-in.
+  const plain = await context.request.post('/auth/password', {
+    form: { email: address, password: 'wrong-password-here', next: '/app' },
+    headers: { origin },
+    maxRedirects: 0,
+  });
+  expect(plain.status()).toBe(429);
+  await refused.setContent(await plain.text());
+  await expect(refused.getByRole('heading', { name: 'Too many attempts' })).toBeVisible();
+  await expect(refused.getByRole('link', { name: 'Back' })).toHaveAttribute('href', '/sign-in');
+  expect(
+    await refused.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    ),
+  ).toBeLessThanOrEqual(0);
   await context.close();
 });

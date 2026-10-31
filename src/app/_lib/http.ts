@@ -27,10 +27,43 @@ export function temporaryRedirect(path: string): NextResponse {
   });
 }
 
-/** Redirects back to a form with a message and the preserved `next` target. */
-export function backToForm(path: string, params: Readonly<Record<string, string>>): NextResponse {
-  const query = new URLSearchParams(params);
-  return seeOther(`${path}?${query.toString()}`);
+/** Whether the caller is the form component (src/app/_components/forms.tsx, RouteForm). */
+export function wantsJson(request: NextRequest): boolean {
+  return (request.headers.get('accept') ?? '').includes('application/json');
+}
+
+/**
+ * The answer of an auth route handler. The form component asks for JSON and gets the outcome as
+ * data (its status code is the real one: 200, 400, 401); a no-JavaScript form post gets a 303 to
+ * `redirect`, or a small HTML page with the message and a link back. Messages never travel in a
+ * URL (CLAUDE.md, "Forms"); they are ours, never the submitted input.
+ */
+export function routeAnswer(
+  request: NextRequest,
+  answer:
+    | { readonly redirect: string }
+    | {
+        readonly ok: boolean;
+        readonly status: number;
+        readonly message: string;
+        readonly backTo: string;
+      },
+): NextResponse {
+  if ('redirect' in answer) {
+    return wantsJson(request)
+      ? NextResponse.json(
+          { ok: true, redirect: relativeLocation(answer.redirect) },
+          { headers: { 'cache-control': 'no-store' } },
+        )
+      : seeOther(answer.redirect);
+  }
+  if (wantsJson(request)) {
+    return NextResponse.json(
+      { ok: answer.ok, message: answer.message },
+      { status: answer.status, headers: { 'cache-control': 'no-store' } },
+    );
+  }
+  return messagePage(answer.status, answer.ok ? 'Done' : 'Not done', answer.message, answer.backTo);
 }
 
 const LOOPBACK_HOSTS = ['localhost', '127.0.0.1', '[::1]'] as const;
@@ -87,15 +120,38 @@ function originOf(value: string | null): string | null {
 const escapeHtml = (value: string): string =>
   value.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
 
-/** 429 with the generic message and a Retry-After. The same body for every key and scope. */
-export function tooManyRequests(retryAfterSeconds: number, backTo: string): NextResponse {
-  const body = `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Too many attempts</title></head><body style="font-family:system-ui;padding:1.5rem;max-width:40rem"><h1>Too many attempts</h1><p>Try again in a few minutes.</p><p><a href="${escapeHtml(backTo)}">Back</a></p></body></html>`;
+/** A minimal HTML page for no-JavaScript form posts: a heading, our message and a link back. */
+function messagePage(
+  status: number,
+  title: string,
+  message: string,
+  backTo: string,
+  headers: Readonly<Record<string, string>> = {},
+): NextResponse {
+  const body = `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title></head><body style="font-family:system-ui;padding:1.5rem;max-width:40rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p><p><a href="${escapeHtml(backTo)}">Back</a></p></body></html>`;
   return new NextResponse(body, {
-    status: 429,
+    status,
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
-      'retry-after': String(retryAfterSeconds),
+      ...headers,
     },
+  });
+}
+
+const TOO_MANY = 'Too many attempts. Try again in a few minutes.';
+
+/** 429 with the generic message and a Retry-After. The same body for every key and scope. */
+export function tooManyRequests(
+  retryAfterSeconds: number,
+  backTo: string,
+  json = false,
+): NextResponse {
+  const headers = { 'cache-control': 'no-store', 'retry-after': String(retryAfterSeconds) };
+  if (json) {
+    return NextResponse.json({ ok: false, message: TOO_MANY }, { status: 429, headers });
+  }
+  return messagePage(429, 'Too many attempts', 'Try again in a few minutes.', backTo, {
+    'retry-after': String(retryAfterSeconds),
   });
 }

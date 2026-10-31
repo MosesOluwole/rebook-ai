@@ -22,6 +22,7 @@ import { type Membership, membershipsRepository } from '../infrastructure/reposi
 import { tenantSlugsRepository } from '../infrastructure/repositories/tenant-slugs';
 import { sqlStateOf, UNIQUE_VIOLATION, violatedConstraintOf } from '../infrastructure/sql-errors';
 import { type TenantRunner, type TenantTx } from '../infrastructure/tenant-tx';
+import { requireId } from './ids';
 import { assertPermission } from './permissions-guard';
 
 export type { Invitation };
@@ -107,7 +108,7 @@ export function listOpenInvitations(tx: TenantTx): Promise<Invitation[]> {
 /** Owner-only. Revoking an invitation that is not open is a NotFoundError (no oracle). */
 export async function revokeInvitation(tx: TenantTx, invitationId: string): Promise<Invitation> {
   assertPermission(tx, 'members.revoke');
-  const revoked = await invitationsRepository.revoke(tx, invitationId);
+  const revoked = await invitationsRepository.revoke(tx, requireId(invitationId));
   if (revoked === null) {
     throw new NotFoundError();
   }

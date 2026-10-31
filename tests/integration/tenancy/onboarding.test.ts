@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { onboardingHooks } from '@/modules/booking';
 import {
   auditLogsRepository,
   createUuidV7Generator,
@@ -142,6 +143,7 @@ describe('completeOnboarding', () => {
         },
       },
       slugSuffix: () => 'zzzz',
+      hooks: onboardingHooks,
     };
     const input = { name, businessType: 'other_timed', timeZone: 'UTC' };
 

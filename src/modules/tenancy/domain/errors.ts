@@ -4,19 +4,9 @@
  * the dev server's hot reload can leave two copies of a class alive. A literal survives
  * production minification, which mangles class names, so `name` is never used for routing.
  */
-/** A caller supplied data that failed validation at a module boundary. */
-export class ValidationError extends Error {
-  static readonly kind = 'ValidationError' as const;
-  readonly kind = ValidationError.kind;
 
-  readonly issues: readonly string[];
-
-  constructor(subject: string, issues: readonly string[]) {
-    super(`Invalid ${subject}: ${issues.join('; ')}`);
-    this.name = 'ValidationError';
-    this.issues = issues;
-  }
-}
+/** Shared with every module's domain layer (src/shared/kernel/validation-error.ts). */
+export { ValidationError } from '@/shared/kernel/validation-error';
 
 /**
  * The thing asked for does not exist for this caller. Deliberately carries no detail: a slug that
@@ -121,6 +111,39 @@ export class AuthProviderError extends Error {
     super(message);
     this.name = 'AuthProviderError';
     this.code = code;
+  }
+}
+
+/**
+ * The business type cannot change once the tenant has services (docs/phases.md Phase 3): service
+ * defaults, booking modes and the health rules were chosen for the type they were created under.
+ */
+export class BusinessTypeLockedError extends Error {
+  static readonly kind = 'BusinessTypeLockedError' as const;
+  readonly kind = BusinessTypeLockedError.kind;
+
+  constructor() {
+    super(
+      'The business type cannot be changed once the business has services. Delete every service first if the type was chosen by mistake.',
+    );
+    this.name = 'BusinessTypeLockedError';
+  }
+}
+
+/**
+ * A business cannot become a health business while it holds custom fields the health rules
+ * forbid: any client-scoped field, or a free-text field no owner has overridden for health use
+ * (docs/phases.md Phase 3, ADR-005 §6).
+ */
+export class HealthCustomFieldsError extends Error {
+  static readonly kind = 'HealthCustomFieldsError' as const;
+  readonly kind = HealthCustomFieldsError.kind;
+
+  constructor() {
+    super(
+      'A business with client custom fields, or free-text fields without the health override, cannot become a health business. Delete those fields on the Custom fields page first.',
+    );
+    this.name = 'HealthCustomFieldsError';
   }
 }
 

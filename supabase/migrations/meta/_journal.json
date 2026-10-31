@@ -50,6 +50,20 @@
       "when": 1793382553606,
       "tag": "20261030174913_tenancy_slug_resolution_invitation_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1793464172969,
+      "tag": "20261031162932_booking_crm_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793464173509,
+      "tag": "20261031162933_booking_crm_policies",
+      "breakpoints": true
     }
   ]
 }

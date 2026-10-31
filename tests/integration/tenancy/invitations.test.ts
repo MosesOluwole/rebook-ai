@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { businessTypeGuard } from '@/modules/crm';
 import {
   AlreadyMemberError,
   auditLogsRepository,
@@ -379,11 +380,11 @@ describe('members and settings (owner-only commands)', () => {
   it('updates business settings with canonical time zone, audits before and after, keeps the slug', async () => {
     const ctx = await ownerCtx();
     const updated = await app.tenancy.withTenant(ctx, (tx) =>
-      updateBusinessSettings(tx, {
-        name: 'Renamed Practice',
-        businessType: 'midwife',
-        timeZone: 'gb',
-      }),
+      updateBusinessSettings(
+        tx,
+        { name: 'Renamed Practice', businessType: 'midwife', timeZone: 'gb' },
+        businessTypeGuard,
+      ),
     );
     expect(updated).toMatchObject({
       id: pair.a.id,
@@ -406,12 +407,11 @@ describe('members and settings (owner-only commands)', () => {
     });
     await expect(
       app.tenancy.withTenant(ctx, (tx) =>
-        updateBusinessSettings(tx, {
-          name: 'X',
-          businessType: 'midwife',
-          timeZone: 'UTC',
-          slug: 'new',
-        }),
+        updateBusinessSettings(
+          tx,
+          { name: 'X', businessType: 'midwife', timeZone: 'UTC', slug: 'new' },
+          businessTypeGuard,
+        ),
       ),
     ).rejects.toMatchObject({ name: 'ValidationError' });
   });

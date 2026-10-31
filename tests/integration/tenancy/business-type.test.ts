@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { businessTypeGuard } from '@/modules/crm';
 import {
   auditLogsRepository,
   BusinessTypeChangeError,
@@ -49,7 +50,11 @@ afterAll(async () => {
 async function change(to: BusinessType) {
   const ctx = await app.tenancy.resolveTenantForUser(pair.a.slug, actorFor(pair.a));
   return app.tenancy.withTenant(ctx, (tx) =>
-    updateBusinessSettings(tx, { name: pair.a.name, businessType: to, timeZone: 'Europe/London' }),
+    updateBusinessSettings(
+      tx,
+      { name: pair.a.name, businessType: to, timeZone: 'Europe/London' },
+      businessTypeGuard,
+    ),
   );
 }
 
@@ -182,11 +187,11 @@ describe('business type directions, each on a fresh tenant', () => {
       expect(before).toEqual({ businessType: from, audits: 0 });
       const ctx = await app.tenancy.resolveTenantForUser(tenant.slug, actorFor(pair.b));
       const attempt = app.tenancy.withTenant(ctx, (tx) =>
-        updateBusinessSettings(tx, {
-          name: tenant.name,
-          businessType: to,
-          timeZone: 'Europe/London',
-        }),
+        updateBusinessSettings(
+          tx,
+          { name: tenant.name, businessType: to, timeZone: 'Europe/London' },
+          businessTypeGuard,
+        ),
       );
       if (allowed) {
         expect((await attempt).businessType).toBe(to);

@@ -1,6 +1,6 @@
 # ADR-003: Time zone names are canonicalised with Intl before they are stored
 
-- **Status:** Proposed (Phase 2). Becomes Accepted when Moses merges Phase 2.
+- **Status:** Accepted (Phase 2 merged 31 Oct 2026, a185e96).
 - **Date:** 2026-10-30
 - **Deciders:** Moses Oluwole (owner); drafted by Claude Code during Phase 2.
 - **Source design:** `docs/architecture.md` §5 (time zones are IANA names; `timestamptz` stored,

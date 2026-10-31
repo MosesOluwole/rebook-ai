@@ -12,17 +12,31 @@ export const PERMISSIONS = [
   'members.revoke',
   'flags.update',
   'settings.update',
+  'services.manage',
+  'team.manage',
+  'schedules.manage',
+  'custom_fields.manage',
+  'custom_fields.health_override',
   'workspace.view',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
 
-/** Permissions only an owner holds (docs/phases.md Phase 2). */
+/**
+ * Permissions only an owner holds (docs/phases.md Phase 2, extended in Phase 3: the business's
+ * configuration). `custom_fields.health_override` is separate from `custom_fields.manage` so the
+ * override that enables free-text fields for a health business is its own audited decision.
+ */
 export const OWNER_ONLY_PERMISSIONS: readonly Permission[] = [
   'members.invite',
   'members.revoke',
   'flags.update',
   'settings.update',
+  'services.manage',
+  'team.manage',
+  'schedules.manage',
+  'custom_fields.manage',
+  'custom_fields.health_override',
 ];
 
 const MATRIX: Readonly<Record<MembershipRole, ReadonlySet<Permission>>> = {

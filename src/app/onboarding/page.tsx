@@ -1,6 +1,14 @@
 import { BUSINESS_TYPES, terminologyFor } from '@/modules/tenancy';
 
 import { signOut } from '../(auth)/actions';
+import {
+  ActionForm,
+  CheckInput,
+  FieldMessage,
+  SelectInput,
+  SubmitButton,
+  TextInput,
+} from '../_components/forms';
 import { actorFor, requireUser } from '../_lib/session';
 import { getTenancy } from '../_lib/tenancy';
 import { timeZoneOptions } from '../_lib/time-zones';
@@ -8,20 +16,9 @@ import { completeOnboardingAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
-const first = (value: string | string[] | undefined): string | undefined =>
-  Array.isArray(value) ? value[0] : value;
-
-export default async function OnboardingPage({
-  searchParams,
-}: {
-  readonly searchParams: Promise<{ readonly error?: string | string[] }>;
-}) {
+export default async function OnboardingPage() {
   const user = await requireUser('/onboarding');
-  const [params, existing] = await Promise.all([
-    searchParams,
-    getTenancy().listMyTenants(actorFor(user)),
-  ]);
-  const error = first(params.error);
+  const existing = await getTenancy().listMyTenants(actorFor(user));
 
   return (
     <main>
@@ -37,52 +34,51 @@ export default async function OnboardingPage({
           </button>
         </form>
       </div>
-      {error !== undefined && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      <form className="stack card" action={completeOnboardingAction}>
-        <label>
-          Business name
-          <input type="text" name="name" required maxLength={120} autoComplete="organization" />
-        </label>
+      <ActionForm action={completeOnboardingAction} className="stack card" label="Create business">
+        <TextInput
+          name="name"
+          label="Business name"
+          required
+          maxLength={120}
+          autoComplete="organization"
+        />
         <fieldset>
           <legend>What kind of business is it?</legend>
           {BUSINESS_TYPES.map((type, index) => {
             const words = terminologyFor(type);
             return (
-              <label key={type}>
-                <input
-                  type="radio"
-                  name="businessType"
-                  value={type}
-                  defaultChecked={index === 0}
-                  required
-                />
-                <span>
-                  {words.label}
-                  <span className="muted">
-                    {' '}
-                    ({words.clients}, {words.bookings})
-                  </span>
-                </span>
-              </label>
+              <CheckInput
+                key={type}
+                type="radio"
+                name="businessType"
+                value={type}
+                defaultChecked={index === 0}
+                required
+                label={
+                  <>
+                    {words.label}
+                    <span className="muted">
+                      {' '}
+                      ({words.clients}, {words.bookings})
+                    </span>
+                  </>
+                }
+              />
             );
           })}
+          <FieldMessage name="businessType" />
         </fieldset>
-        <label>
-          Time zone
-          <select name="timeZone" defaultValue="Europe/London" required>
-            {timeZoneOptions().map((zone) => (
-              <option key={zone} value={zone}>
-                {zone}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button type="submit">Create business</button>
-      </form>
+        <SelectInput
+          name="timeZone"
+          label="Time zone"
+          defaultValue="Europe/London"
+          required
+          options={timeZoneOptions().map((zone) => ({ value: zone, label: zone }))}
+        />
+        <div>
+          <SubmitButton>Create business</SubmitButton>
+        </div>
+      </ActionForm>
     </main>
   );
 }

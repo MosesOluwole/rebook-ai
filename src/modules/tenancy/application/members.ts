@@ -2,6 +2,7 @@ import { CannotRevokeSelfError, NotFoundError } from '../domain/errors';
 import { auditLogsRepository } from '../infrastructure/repositories/audit-logs';
 import { type Membership, membershipsRepository } from '../infrastructure/repositories/memberships';
 import { type TenantTx } from '../infrastructure/tenant-tx';
+import { requireId } from './ids';
 import { assertPermission } from './permissions-guard';
 
 export type { Membership };
@@ -18,7 +19,7 @@ export function listMembers(tx: TenantTx): Promise<Membership[]> {
  */
 export async function revokeMember(tx: TenantTx, membershipId: string): Promise<Membership> {
   assertPermission(tx, 'members.revoke');
-  const target = await membershipsRepository.findById(tx, membershipId);
+  const target = await membershipsRepository.findById(tx, requireId(membershipId));
   if (target?.revokedAt !== null) {
     throw new NotFoundError();
   }

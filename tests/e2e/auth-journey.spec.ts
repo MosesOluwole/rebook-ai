@@ -96,7 +96,8 @@ test('sign-in with a magic link read from the mail catcher', async ({ page, requ
   // The link was single-use.
   await signOut(page);
   await page.goto(link);
-  await expect(page).toHaveURL(/\/sign-in\?error=/);
+  // A code, not a message, in the URL; the page supplies the sentence.
+  await expect(page).toHaveURL(/\/sign-in\?link=invalid$/);
   // Next's route announcer is also role=alert; the message is the paragraph.
   await expect(page.locator('p[role="alert"]')).toContainText('invalid or has expired');
 });
@@ -178,13 +179,15 @@ test('settings and feature flags are owner-only and audited through the UI', asy
 
   await expect(page.getByTestId('flag-ai_chat')).toHaveText('off');
   await page.getByRole('button', { name: 'Turn on' }).click();
-  await expect(page.getByRole('status')).toContainText('ai_chat turned on');
+  await expect(page.getByRole('status').filter({ hasText: 'ai_chat turned on' })).toBeVisible();
   await expect(page.getByTestId('flag-ai_chat')).toHaveText('on');
 
   await page.getByRole('textbox', { name: 'Name' }).fill('Flag Studio Renamed');
   await page.getByRole('radio', { name: 'Midwife' }).check();
   await page.getByRole('button', { name: 'Save settings' }).click();
-  await expect(page.getByRole('status')).toContainText('Settings saved');
+  await expect(
+    page.getByRole('form', { name: 'Business settings' }).getByRole('status'),
+  ).toHaveText('Settings saved.');
   await page.goto(`/app/${slug}`);
   await expect(page.getByRole('heading', { level: 1, name: 'Flag Studio Renamed' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Patients' })).toBeVisible();

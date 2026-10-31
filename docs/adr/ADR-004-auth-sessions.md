@@ -1,6 +1,6 @@
 # ADR-004: Authentication, session verification and the authorised tenant context
 
-- **Status:** Proposed (Phase 2). Becomes Accepted when Moses merges Phase 2.
+- **Status:** Accepted (Phase 2 merged 31 Oct 2026, a185e96).
 - **Date:** 2026-10-30
 - **Deciders:** Moses Oluwole (owner); drafted by Claude Code during Phase 2.
 - **Source design:** `docs/architecture.md` §4 (tenancy, identity, authorisation);
@@ -149,7 +149,10 @@ The environment refuses to validate when `NODE_ENV=test` and Vercel's `VERCEL` m
 set, so the test header can never be trusted on the platform; elsewhere it rests on `NODE_ENV=test`
 being used only by the local e2e gate.
 
-To return a real 429, these four flows are route handlers (`/auth/password`, `/auth/magic-link`,
+To return a real 429, these four flows are route handlers (since Phase 3 their forms post with
+`Accept: application/json` and receive the outcome as data with the real status, `routeAnswer`
+in `src/app/_lib/http.ts`; a plain post gets a 303 or a small HTML page, never a message in a
+URL) (`/auth/password`, `/auth/magic-link`,
 `/auth/sign-up`, `/invite/[slug]/[token]/accept`) rather than server actions. Route handlers are
 not covered by React's server-action origin check, so each one verifies the request's origin
 before reading the form (403 otherwise). The `Origin` header decides; the `Referer` is consulted
@@ -168,6 +171,15 @@ handler issues is path-relative (percent-encoded, never carrying a host); the re
 interceptor's signed-out redirect, which Next requires to be absolute, is built by `appUrl()` and
 marked uncacheable. Supabase's own emails use the project's Site URL, which must equal
 `APP_ORIGIN`. Sign-out stays a server action.
+
+Since Phase 3 the request interceptor applies the same check to every request that is not a GET
+or HEAD (`src/proxy.ts`, before any session work): a cross-origin POST, PUT, PATCH, DELETE or
+OPTIONS gets the same 403. The interceptor's matcher excludes only `_next/static`; asset-looking
+paths and `/health` skip the session work for GET and HEAD only, because a dynamic segment also
+matches a path such as `/app/<slug>/services/x.png`. Server actions are POSTs to page paths, so they no longer depend on
+Next's own origin check, which compares `Origin` with the `Host` and `X-Forwarded-Host` headers.
+A future endpoint that must accept cross-site posts (a provider webhook in Phase 6) has to be
+excluded from the interceptor's matcher explicitly and verify its own signature instead.
 
 Costs of the limits, stated plainly: a known address's password sign-in and magic link can be
 locked out by anyone for the length of a window (5 and 3 attempts per 10 minutes); the owner's

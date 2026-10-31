@@ -56,18 +56,28 @@ test('a POST from APP_ORIGIN is accepted even when the forwarded headers name an
     headers: { ...SPOOFED, origin: baseURL ?? '' },
     maxRedirects: 0,
   });
-  expect(accepted.status()).toBe(303);
-  expect(accepted.headers().location).toMatch(/^\/sign-in\?sent=1/);
+  // Accepted: the plain-post answer is the "check your email" page (no redirect, no URL message).
+  expect(accepted.status()).toBe(200);
+  expect(await accepted.text()).toContain('Check your email for a sign-in link');
 });
 
 test('every form-post redirect carries a path-relative Location', async ({ request, baseURL }) => {
+  // A successful sign-up redirects (relative) to onboarding; a failure is a page, not a redirect.
+  const signUp = await request.post('/auth/sign-up', {
+    form: { email: uniqueEmail('relative'), password: 'correct-horse-battery', next: '/app' },
+    headers: { ...SPOOFED, origin: baseURL ?? '' },
+    maxRedirects: 0,
+  });
+  expect(signUp.status()).toBe(303);
+  expect(signUp.headers().location).toBe('/onboarding');
+
   const signIn = await request.post('/auth/password', {
     form: { email: uniqueEmail('relative'), password: 'wrong-password-here', next: '/app' },
     headers: { ...SPOOFED, origin: baseURL ?? '' },
     maxRedirects: 0,
   });
-  expect(signIn.status()).toBe(303);
-  expect(signIn.headers().location).toMatch(/^\/sign-in\?error=/);
+  expect(signIn.status()).toBe(401);
+  expect(signIn.headers().location).toBeUndefined();
 
   const bogus = await request.get('/auth/confirm', {
     params: { token_hash: 'not-a-real-token-hash-value', type: 'magiclink', next: '/app' },
@@ -75,7 +85,8 @@ test('every form-post redirect carries a path-relative Location', async ({ reque
     maxRedirects: 0,
   });
   expect(bogus.status()).toBe(307);
-  expect(bogus.headers().location).toMatch(/^\/sign-in\?error=/);
+  // A code the sign-in page turns into its own sentence; no message text in the URL.
+  expect(bogus.headers().location).toBe('/sign-in?link=invalid');
 });
 
 /** The interceptor's Location: absolute on APP_ORIGIN, or relativised by Next (same origin). */
@@ -112,28 +123,38 @@ test('the signed-out redirect from the request interceptor stays on APP_ORIGIN w
   expect(await api.json()).toEqual({ error: 'unauthenticated' });
 });
 
-test('an invite link is built on APP_ORIGIN even when X-Forwarded-Host and Origin are spoofed', async ({
+test('a server action with spoofed X-Forwarded-Host and matching Origin is refused by the proxy', async ({
   page,
-  baseURL,
 }) => {
   await signUp(page, uniqueEmail('spoof-owner'));
   const slug = await onboard(page, 'Spoof Proof Events', 'Event planner');
 
   // From here every request claims to be for evil.example, and the Origin agrees, so Next's own
-  // server-action check (Origin host against X-Forwarded-Host) lets the action run: exactly the
-  // case where a header-derived link would point at the attacker's host. Chromium refuses to
-  // override Host itself (ERR_INVALID_ARGUMENT); a spoofed Host is covered through the request
-  // API in invite-link-spoofed-host.spec.ts. This test keeps the real browser path (JavaScript
-  // server action, no React internals) under a spoofed X-Forwarded-Host.
+  // server-action check (Origin host against X-Forwarded-Host) would let the action run: the case
+  // where a header-derived link would point at the attacker's host. Since Phase 3 the request
+  // interceptor compares Origin with APP_ORIGIN first and refuses the POST with 403 (ADR-004 §9),
+  // so the action never runs. Chromium refuses to override Host itself; a spoofed Host is covered
+  // through the request API in invite-link-spoofed-host.spec.ts. This keeps the real browser path
+  // (JavaScript server action, no React internals) under a spoofed X-Forwarded-Host.
   await page.setExtraHTTPHeaders({ ...SPOOFED, origin: 'https://evil.example' });
   await page.goto(`/app/${slug}/team`);
   await page.getByLabel('Email').fill(uniqueEmail('spoof-invitee'));
   await page.getByLabel('Role').selectOption('staff');
-  await page.getByRole('button', { name: 'Create invite link' }).click();
+  const [action] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === `/app/${slug}/team`,
+    ),
+    page.getByRole('button', { name: 'Create invite link' }).click(),
+  ]);
+  expect(action.status()).toBe(403);
+  await expect(page.getByTestId('invite-link')).toHaveCount(0);
 
-  const link = (await page.getByTestId('invite-link').textContent()) ?? '';
-  const prefix = `${baseURL ?? ''}/invite/${slug}/`;
-  expect(link.startsWith(prefix), link).toBe(true);
-  expect(link.slice(prefix.length)).toMatch(/^[A-Za-z0-9_-]{43}$/);
-  expect(link).not.toContain('evil.example');
+  // Without the spoofed headers the owner sees that nothing was created.
+  await page.setExtraHTTPHeaders({});
+  await page.goto(`/app/${slug}/team`);
+  await expect(
+    page.getByRole('region', { name: 'Open invitations' }).getByText('None.'),
+  ).toBeVisible();
 });

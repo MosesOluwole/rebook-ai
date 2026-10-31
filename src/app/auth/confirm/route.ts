@@ -25,7 +25,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const params = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = query.safeParse(params);
   // Path-relative redirects: behind a proxy `request.nextUrl` carries the listen host, not ours.
-  const failed = `/sign-in?${new URLSearchParams({ error: 'This link is invalid or has expired. Request a new one.' }).toString()}`;
+  // A code the sign-in page maps to its own sentence: no message text travels in the URL.
+  const failed = '/sign-in?link=invalid';
   if (!parsed.success) {
     return temporaryRedirect(failed);
   }

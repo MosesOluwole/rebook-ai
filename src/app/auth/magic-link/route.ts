@@ -1,7 +1,7 @@
 import { type NextRequest, type NextResponse } from 'next/server';
 
 import { formMessage } from '../../_lib/form-errors';
-import { backToForm, rejectCrossOrigin } from '../../_lib/http';
+import { rejectCrossOrigin, routeAnswer } from '../../_lib/http';
 import { rateLimitOrNull } from '../../_lib/rate-limiter';
 import { safeNextPath } from '../../_lib/safe-next';
 import { getAuthSession } from '../../_lib/session';
@@ -26,16 +26,28 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const parsed = emailOnlySchema.safeParse({ email });
   if (!parsed.success) {
-    return backToForm('/sign-in', {
-      error: 'Enter a valid email address for the sign-in link.',
-      next,
+    return routeAnswer(request, {
+      ok: false,
+      status: 400,
+      message: 'Enter a valid email address for the sign-in link.',
+      backTo: '/sign-in',
     });
   }
   const auth = await getAuthSession();
   try {
     await auth.sendMagicLink(parsed.data.email);
   } catch (error) {
-    return backToForm('/sign-in', { error: formMessage(error), next });
+    return routeAnswer(request, {
+      ok: false,
+      status: 400,
+      message: formMessage(error),
+      backTo: '/sign-in',
+    });
   }
-  return backToForm('/sign-in', { sent: '1', next });
+  return routeAnswer(request, {
+    ok: true,
+    status: 200,
+    message: 'Check your email for a sign-in link. It works once and expires in an hour.',
+    backTo: `/sign-in?next=${encodeURIComponent(next)}`,
+  });
 }

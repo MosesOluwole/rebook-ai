@@ -141,22 +141,26 @@ Privacy and legal work for the midwife pilot is parked by decision and must be r
 
 **What.**
 
-- `services`: name, `booking_mode` (`timed` or `request`), duration, buffer before and after, price as `numeric(12,2)` plus currency, location type (`clinic`, `client_home`, `video`, `venue`), repeat interval, published flag.
-- `team_members` linked to memberships, with `staff_services` eligibility.
+- **Phase 2 follow-ups first.** `src/proxy.ts` rejects every cross-origin non-GET request with the same `APP_ORIGIN` allow-list as the form routes, so server actions no longer rely on Next's header-based check. `db:roles` accepts `rebook_authenticator` or the pooler form `rebook_authenticator.<project-ref>` and checks the role part. The "brand-new connection" isolation probe asserts `nullif(current_setting('app.tenant_id', true), '') is null` (true behind a transaction pooler too) and is renamed to a transaction with no context. A test proves the proxy refreshes a session whose access token is near expiry and writes the new cookies.
+- **Business type is locked once services exist.** Changing it is allowed only while the tenant has no services; health to non-health stays blocked always (Phase 2 trigger).
+- `services`: name, `booking_mode` (`timed` or `request`), duration, buffer before and after, price as `numeric(12,2)` plus currency, location type (`clinic`, `client_home`, `video`, `venue`), repeat interval, published flag. Event planner services default to `request` and `venue`; midwife services default to `timed`.
+- `team_members` linked to memberships, with `staff_services` eligibility. These are the first tables whose parents are tenant-owned, so composite foreign keys are exercised for real.
 - `working_hours` (weekly rules in wall-clock time per location), breaks, `availability_exceptions` (time off, closures).
 - Midwife service areas: postcode district list per team member, and travel minutes added before and after home visits.
-- `custom_field_definitions` and `custom_field_values` for clients and services, validated by a Zod schema built from each definition. For health business types, free-text field types are disabled by default and show a warning if enabled.
+- `custom_field_definitions` and `custom_field_values` for clients and services, validated by a Zod schema built from each definition. For health business types, client-scoped custom fields are not available in the MVP (data minimisation; enforced by a database trigger, and switching to a health type is refused while client fields exist); service-scoped free-text fields are disabled by default and audited if enabled.
 - `daily_capacity_rules` for request-mode services (events per date per team member), table only; enforcement arrives in Phase 7.
 - Back-office screens for all of the above, usable at 375 px.
 
 **Acceptance criteria.**
 
+- [ ] Phase 2 follow-ups: a server-action POST with a foreign `Origin` gets 403 from the proxy; `db:roles` succeeds with a `rebook_authenticator.<ref>` username and refuses any other role; the no-context probe passes locally and is written to pass behind a pooler; the near-expiry refresh test passes.
+- [ ] Changing business type fails with a clear message once the tenant has any service, and still works before.
 - [ ] Invalid configuration is rejected server-side with field-level errors: negative durations, overlapping working-hour ranges on one day, buffers over 4 hours, price with more than 2 decimals, unknown currency.
-- [ ] A service cannot be assigned to a team member from another tenant (composite FK test).
+- [ ] A service cannot be assigned to a team member from another tenant, and every new child table's foreign keys to tenant-owned parents include `tenant_id` (composite FK test plus the CI schema check).
 - [ ] Working hours entered as 09:00–17:00 Europe/London are stored as wall-clock rules and resolve to the correct UTC instants on both sides of a DST change.
 - [ ] A health business cannot create a free-text custom field without an explicit override, and the override is audited.
 - [ ] Custom field values failing their definition's type or options are rejected.
-- [ ] Unpublishing a service hides it from public reads while keeping existing bookings intact.
+- [ ] Unpublishing a service hides it from public reads (existing bookings are proven in Phase 4).
 - [ ] Isolation suite extended to every new table and route; all pass.
 - [ ] Playwright at 375 px: create a service, add a team member, set hours, add time off, define a custom field.
 
@@ -166,14 +170,18 @@ Privacy and legal work for the midwife pilot is parked by decision and must be r
 
 **What.**
 
-- `bookings` table (the design doc's `appointments`) with `blocked tstzrange` covering buffers and travel, `price_snapshot`, immutable `source` and `campaign_send_id`, `version`, and the `no_overlap` exclusion constraint on active statuses.
+- **Phase 3 follow-up first.** Destructive back-office actions (remove member, revoke invitation, delete custom field, delete time off, and every later delete) ask for confirmation before acting and show a success message after.
+- **Clients (crm module, minimal).** `clients`: name, normalised email (`citext`), E.164 phone, no free-text notes. Staff create and edit clients; public matching arrives in Phase 5. Custom field values for the `client` entity must reference an existing client in the same tenant (trigger, since the link is polymorphic).
+- **Booking settings** per tenant: slot grid (5–60 min, default 15), minimum notice (default 2 h), maximum advance (default 90 days), client cancel and reschedule cut-offs (default 24 h). Created at onboarding and backfilled for existing tenants.
+- `bookings` table (the design doc's `appointments`): composite FKs to team member, service, client and location; statuses `confirmed`, `completed`, `cancelled`, `no_show` (`pending` reserved); `starts_at`, `ends_at`; `blocked tstzrange` covering buffers and, for home visits, travel time; `price_snapshot` and currency; immutable `source` (only `staff` is used in Phase 4) and `campaign_send_id`; `version`; and the `no_overlap` exclusion constraint on active statuses.
 - `BEFORE UPDATE` trigger rejecting changes to `source` or `campaign_send_id`.
 - `booking_events` appended in the same transaction as every state change.
-- Pure `computeSlots(rules, busy, settings, range)` in `domain`, with no I/O and no clock access (time passed in).
+- Pure `computeSlots(rules, busy, settings, range)` in `domain`, with no I/O and no clock access (time passed in); wall-clock conversion with `Intl`, since Node 24 has no Temporal.
 - `AvailabilityService`: one indexed range query plus `computeSlots`; max 31-day range.
-- `BookingService.create`, `reschedule`, `cancel`, `complete`, `markNoShow`: idempotency key claim, availability re-check, insert or update, map SQLSTATE 23P01 to a 409 with the next three slots.
+- `BookingService.create`, `reschedule`, `cancel`, `complete`, `markNoShow`: idempotency key claim, availability re-check, insert or update, map SQLSTATE 23P01 to a 409 with the next three slots. For "any team member", candidates are ordered deterministically (least booked that day, then team order) and the next candidate is tried on conflict before returning alternatives.
 - Cut-off windows for client cancel and reschedule, evaluated in the location's time zone; staff override with an audited reason.
 - Manage-booking links: 128-bit random tokens stored as SHA-256 hashes, scoped to one booking, with expiry and revocation.
+- Minimal staff screen at 375 px: pick a client, service and slot to create a booking; list upcoming bookings with reschedule, cancel, complete and no-show. The full calendar is Phase 8.
 
 **Acceptance criteria.**
 
@@ -181,10 +189,16 @@ Privacy and legal work for the midwife pilot is parked by decision and must be r
 - [ ] Replaying a `create` with the same idempotency key returns the original response and writes no second row; same key with a different body returns 422.
 - [ ] Property-based tests: no returned slot overlaps a busy range, breaks, time off, buffers or travel time; every slot lies inside working hours.
 - [ ] DST tests for Europe/London on the last Sundays of March and October 2026 and 2027: no slot at a non-existent local time; ambiguous times resolve to the earlier instant.
+- [ ] A home-visit slot that fits the visit but not its travel time is never offered, and the exclusion constraint rejects it if forced.
+- [ ] "Any team member" assigns deterministically, and a concurrent conflict on the first candidate books the next eligible member or returns alternatives.
+- [ ] Clients: email and phone are normalised; a client of tenant B cannot be booked in tenant A; client custom field values must reference an existing client of the same tenant.
+- [ ] Booking settings are validated (grid 5–60, notice ≥ 0, advance 1–365 days, cut-offs ≥ 0) and every tenant has them, including tenants created before this phase.
 - [ ] Updating `source` on a booking raises an error from the trigger.
 - [ ] Cancelling releases the slot: a new booking for the same time succeeds.
+- [ ] Unpublishing a service hides it from new bookings while its existing bookings stay intact and can still be rescheduled, cancelled and completed (carried over from Phase 3, which had no bookings table).
 - [ ] Reschedule with a stale `version` fails without changing the row.
 - [ ] A manage link for booking X cannot read or change booking Y; expired and revoked links return 404.
+- [ ] Playwright at desktop and 375 px: staff create, reschedule, cancel, complete and mark no-show on a booking; every destructive action asks for confirmation and reports success.
 - [ ] Availability p95 under 300 ms on a seeded tenant with 5 team members and 2,000 bookings (measured locally, numbers recorded).
 
 ## Phase 5 — Booking pages, midwife invite links and attribution

@@ -98,6 +98,11 @@ input[type='text'],
 input[type='email'],
 input[type='password'],
 input[type='url'],
+input[type='number'],
+input[type='time'],
+input[type='date'],
+input[type='datetime-local'],
+textarea,
 select {
   width: 100%;
   max-width: 100%;
@@ -224,4 +229,68 @@ code {
 
 .muted {
   color: var(--muted);
+}
+
+/* Phase 3: field-level errors and compact form layouts that still fit 375 px. */
+.field-error {
+  color: var(--danger);
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+[aria-invalid='true'] {
+  border-color: var(--danger) !important;
+}
+
+.row {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+}
+
+.inline-form {
+  display: inline;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.warning {
+  border-left: 4px solid #b54708;
+  padding: 0.5rem 0.75rem;
+  background: #fffaeb;
+  margin: 0.75rem 0;
+}
+
+.day {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.pair {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.pair label {
+  font-weight: 500;
+}
+
+ul.plain {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+ul.plain li {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.5rem;
+  overflow-wrap: anywhere;
 }

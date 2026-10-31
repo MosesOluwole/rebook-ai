@@ -1,3 +1,4 @@
+import { tenantHasServices } from '@/modules/booking';
 import {
   BUSINESS_TYPES,
   can,
@@ -6,6 +7,14 @@ import {
   terminologyFor,
 } from '@/modules/tenancy';
 
+import {
+  ActionForm,
+  CheckInput,
+  FieldMessage,
+  SelectInput,
+  SubmitButton,
+  TextInput,
+} from '../../../_components/forms';
 import { getTenancy } from '../../../_lib/tenancy';
 import { timeZoneOptions } from '../../../_lib/time-zones';
 import { loadWorkspace } from '../_lib/workspace';
@@ -13,92 +22,77 @@ import { toggleFlagAction, updateSettingsAction } from './actions';
 
 export const dynamic = 'force-dynamic';
 
-const first = (value: string | string[] | undefined): string | undefined =>
-  Array.isArray(value) ? value[0] : value;
-
 export default async function SettingsPage({
   params,
-  searchParams,
 }: {
   readonly params: Promise<{ readonly slug: string }>;
-  readonly searchParams: Promise<{
-    readonly notice?: string | string[];
-    readonly error?: string | string[];
-  }>;
 }) {
-  const [{ slug }, query] = await Promise.all([params, searchParams]);
+  const { slug } = await params;
   const { ctx, tenant } = await loadWorkspace(slug);
   const isOwner = ctx.role !== null && can(ctx.role, 'settings.update');
-  const flags = await getTenancy().withTenant(ctx, async (tx) =>
-    Promise.all(
+  const { flags, typeLocked } = await getTenancy().withTenant(ctx, async (tx) => ({
+    flags: await Promise.all(
       KNOWN_FEATURE_FLAGS.map(async (flag) => ({
         flag,
         enabled: await isFeatureEnabled(tx, flag),
       })),
     ),
-  );
-  const notice = first(query.notice);
-  const error = first(query.error);
+    // Shown, not enforced, here: updateBusinessSettings refuses the change on the server.
+    typeLocked: await tenantHasServices(tx),
+  }));
 
   return (
     <>
       <h1>Settings</h1>
-      {notice !== undefined && (
-        <p className="notice" role="status">
-          {notice}
-        </p>
-      )}
-      {error !== undefined && (
-        <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
       {!isOwner && <p className="muted">Only an owner can change these settings.</p>}
 
       <section className="card" aria-labelledby="business-heading">
         <h2 id="business-heading">Business</h2>
-        <form className="stack" action={updateSettingsAction}>
+        <ActionForm action={updateSettingsAction} label="Business settings">
           <input type="hidden" name="slug" value={slug} />
-          <label>
-            Name
-            <input
-              type="text"
-              name="name"
-              defaultValue={tenant.name}
-              required
-              maxLength={120}
-              disabled={!isOwner}
-            />
-          </label>
+          <TextInput
+            name="name"
+            label="Name"
+            defaultValue={tenant.name}
+            required
+            maxLength={120}
+            disabled={!isOwner}
+          />
           <fieldset disabled={!isOwner}>
             <legend>Business type</legend>
+            {typeLocked && (
+              <p className="muted" data-testid="business-type-locked">
+                Locked: the business type cannot change once you have services.
+              </p>
+            )}
             {BUSINESS_TYPES.map((type) => (
-              <label key={type}>
-                <input
-                  type="radio"
-                  name="businessType"
-                  value={type}
-                  defaultChecked={type === tenant.businessType}
-                />
-                <span>{terminologyFor(type).label}</span>
-              </label>
+              <CheckInput
+                key={type}
+                type="radio"
+                name="businessType"
+                value={type}
+                label={terminologyFor(type).label}
+                defaultChecked={type === tenant.businessType}
+              />
             ))}
+            <FieldMessage name="businessType" />
           </fieldset>
-          <label>
-            Time zone
-            <select name="timeZone" defaultValue={tenant.timeZone} disabled={!isOwner}>
-              {timeZoneOptions().map((zone) => (
-                <option key={zone} value={zone}>
-                  {zone}
-                </option>
-              ))}
-            </select>
-          </label>
+          <SelectInput
+            name="timeZone"
+            label="Time zone"
+            defaultValue={tenant.timeZone}
+            disabled={!isOwner}
+            options={timeZoneOptions().map((zone) => ({ value: zone, label: zone }))}
+          />
           <p className="muted">
             Address: <code>/app/{tenant.slug}</code> (cannot be changed).
           </p>
-          {isOwner && <button type="submit">Save settings</button>}
-        </form>
+          {isOwner && (
+            <div>
+              <SubmitButton>Save settings</SubmitButton>
+            </div>
+          )}
+        </ActionForm>
       </section>
 
       <section className="card" aria-labelledby="flags-heading">
@@ -120,14 +114,12 @@ export default async function SettingsPage({
                 <td data-testid={`flag-${flag}`}>{enabled ? 'on' : 'off'}</td>
                 {isOwner && (
                   <td>
-                    <form action={toggleFlagAction}>
+                    <ActionForm action={toggleFlagAction} className="inline-form">
                       <input type="hidden" name="slug" value={slug} />
                       <input type="hidden" name="flag" value={flag} />
                       <input type="hidden" name="enabled" value={enabled ? 'false' : 'true'} />
-                      <button type="submit" className="quiet">
-                        Turn {enabled ? 'off' : 'on'}
-                      </button>
-                    </form>
+                      <SubmitButton className="quiet">Turn {enabled ? 'off' : 'on'}</SubmitButton>
+                    </ActionForm>
                   </td>
                 )}
               </tr>

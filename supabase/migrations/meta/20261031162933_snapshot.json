@@ -1,0 +1,2019 @@
+{
+  "id": "91785afa-6434-4ae3-b08e-9a40920aa96e",
+  "prevId": "1df19600-ceae-4121-be3b-9df047363bda",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "rebook.availability_exceptions": {
+      "name": "availability_exceptions",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_member_id": {
+          "name": "team_member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "starts_at": {
+          "name": "starts_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ends_at": {
+          "name": "ends_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "availability_exceptions_tenant_id_ends_at_idx": {
+          "name": "availability_exceptions_tenant_id_ends_at_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "ends_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        },
+        "availability_exceptions_tenant_id_team_member_id_idx": {
+          "name": "availability_exceptions_tenant_id_team_member_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "team_member_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "availability_exceptions_tenant_id_tenants_id_fk": {
+          "name": "availability_exceptions_tenant_id_tenants_id_fk",
+          "tableFrom": "availability_exceptions",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "availability_exceptions_team_member_fk": {
+          "name": "availability_exceptions_team_member_fk",
+          "tableFrom": "availability_exceptions",
+          "columnsFrom": [
+            "tenant_id",
+            "team_member_id"
+          ],
+          "tableTo": "team_members",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "availability_exceptions_location_fk": {
+          "name": "availability_exceptions_location_fk",
+          "tableFrom": "availability_exceptions",
+          "columnsFrom": [
+            "tenant_id",
+            "location_id"
+          ],
+          "tableTo": "locations",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "availability_exceptions_tenant_id_id_unique": {
+          "name": "availability_exceptions_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "availability_exceptions_kind_valid": {
+          "name": "availability_exceptions_kind_valid",
+          "value": "\"rebook\".\"availability_exceptions\".\"kind\" in ('time_off', 'closure')"
+        },
+        "availability_exceptions_kind_subject": {
+          "name": "availability_exceptions_kind_subject",
+          "value": "(\"rebook\".\"availability_exceptions\".\"kind\" = 'time_off') = (\"rebook\".\"availability_exceptions\".\"team_member_id\" is not null)"
+        },
+        "availability_exceptions_ends_after_start": {
+          "name": "availability_exceptions_ends_after_start",
+          "value": "\"rebook\".\"availability_exceptions\".\"ends_at\" > \"rebook\".\"availability_exceptions\".\"starts_at\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.daily_capacity_rules": {
+      "name": "daily_capacity_rules",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_member_id": {
+          "name": "team_member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_events_per_date": {
+          "name": "max_events_per_date",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "daily_capacity_rules_tenant_id_tenants_id_fk": {
+          "name": "daily_capacity_rules_tenant_id_tenants_id_fk",
+          "tableFrom": "daily_capacity_rules",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "daily_capacity_rules_team_member_fk": {
+          "name": "daily_capacity_rules_team_member_fk",
+          "tableFrom": "daily_capacity_rules",
+          "columnsFrom": [
+            "tenant_id",
+            "team_member_id"
+          ],
+          "tableTo": "team_members",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "daily_capacity_rules_tenant_id_id_unique": {
+          "name": "daily_capacity_rules_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "daily_capacity_rules_tenant_id_team_member_id_unique": {
+          "name": "daily_capacity_rules_tenant_id_team_member_id_unique",
+          "columns": [
+            "tenant_id",
+            "team_member_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "daily_capacity_rules_max_events_range": {
+          "name": "daily_capacity_rules_max_events_range",
+          "value": "\"rebook\".\"daily_capacity_rules\".\"max_events_per_date\" between 1 and 50"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.services": {
+      "name": "services",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "booking_mode": {
+          "name": "booking_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "duration_minutes": {
+          "name": "duration_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "buffer_before_minutes": {
+          "name": "buffer_before_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "buffer_after_minutes": {
+          "name": "buffer_after_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "price": {
+          "name": "price",
+          "type": "numeric(12, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "char(3)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location_type": {
+          "name": "location_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "repeat_interval_days": {
+          "name": "repeat_interval_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "published": {
+          "name": "published",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "services_tenant_id_tenants_id_fk": {
+          "name": "services_tenant_id_tenants_id_fk",
+          "tableFrom": "services",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "services_tenant_id_id_unique": {
+          "name": "services_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "services_name_length": {
+          "name": "services_name_length",
+          "value": "length(btrim(\"rebook\".\"services\".\"name\")) between 1 and 120"
+        },
+        "services_booking_mode_valid": {
+          "name": "services_booking_mode_valid",
+          "value": "\"rebook\".\"services\".\"booking_mode\" in ('timed', 'request')"
+        },
+        "services_location_type_valid": {
+          "name": "services_location_type_valid",
+          "value": "\"rebook\".\"services\".\"location_type\" in ('clinic', 'client_home', 'video', 'venue')"
+        },
+        "services_duration_range": {
+          "name": "services_duration_range",
+          "value": "\"rebook\".\"services\".\"duration_minutes\" between 5 and 1440"
+        },
+        "services_buffers_range": {
+          "name": "services_buffers_range",
+          "value": "\"rebook\".\"services\".\"buffer_before_minutes\" between 0 and 240 and \"rebook\".\"services\".\"buffer_after_minutes\" between 0 and 240"
+        },
+        "services_price_not_negative": {
+          "name": "services_price_not_negative",
+          "value": "\"rebook\".\"services\".\"price\" >= 0"
+        },
+        "services_currency_format": {
+          "name": "services_currency_format",
+          "value": "\"rebook\".\"services\".\"currency\" ~ '^[A-Z]{3}$'"
+        },
+        "services_repeat_interval_range": {
+          "name": "services_repeat_interval_range",
+          "value": "\"rebook\".\"services\".\"repeat_interval_days\" is null or \"rebook\".\"services\".\"repeat_interval_days\" between 1 and 1095"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.staff_services": {
+      "name": "staff_services",
+      "schema": "rebook",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_member_id": {
+          "name": "team_member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "staff_services_tenant_id_service_id_idx": {
+          "name": "staff_services_tenant_id_service_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "staff_services_tenant_id_tenants_id_fk": {
+          "name": "staff_services_tenant_id_tenants_id_fk",
+          "tableFrom": "staff_services",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "staff_services_team_member_fk": {
+          "name": "staff_services_team_member_fk",
+          "tableFrom": "staff_services",
+          "columnsFrom": [
+            "tenant_id",
+            "team_member_id"
+          ],
+          "tableTo": "team_members",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "staff_services_service_fk": {
+          "name": "staff_services_service_fk",
+          "tableFrom": "staff_services",
+          "columnsFrom": [
+            "tenant_id",
+            "service_id"
+          ],
+          "tableTo": "services",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {
+        "staff_services_pkey": {
+          "name": "staff_services_pkey",
+          "columns": [
+            "tenant_id",
+            "team_member_id",
+            "service_id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "rebook.team_member_service_areas": {
+      "name": "team_member_service_areas",
+      "schema": "rebook",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_member_id": {
+          "name": "team_member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "postcode_district": {
+          "name": "postcode_district",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "team_member_service_areas_tenant_id_tenants_id_fk": {
+          "name": "team_member_service_areas_tenant_id_tenants_id_fk",
+          "tableFrom": "team_member_service_areas",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "team_member_service_areas_team_member_fk": {
+          "name": "team_member_service_areas_team_member_fk",
+          "tableFrom": "team_member_service_areas",
+          "columnsFrom": [
+            "tenant_id",
+            "team_member_id"
+          ],
+          "tableTo": "team_members",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {
+        "team_member_service_areas_pkey": {
+          "name": "team_member_service_areas_pkey",
+          "columns": [
+            "tenant_id",
+            "team_member_id",
+            "postcode_district"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "team_member_service_areas_district_format": {
+          "name": "team_member_service_areas_district_format",
+          "value": "\"rebook\".\"team_member_service_areas\".\"postcode_district\" ~ '^[A-Z]{1,2}[0-9][A-Z0-9]?$'"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.team_members": {
+      "name": "team_members",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "membership_id": {
+          "name": "membership_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "display_name": {
+          "name": "display_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "active": {
+          "name": "active",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": true
+        },
+        "travel_before_minutes": {
+          "name": "travel_before_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "travel_after_minutes": {
+          "name": "travel_after_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "team_members_tenant_id_tenants_id_fk": {
+          "name": "team_members_tenant_id_tenants_id_fk",
+          "tableFrom": "team_members",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "team_members_tenant_id_id_unique": {
+          "name": "team_members_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "team_members_tenant_id_membership_id_unique": {
+          "name": "team_members_tenant_id_membership_id_unique",
+          "columns": [
+            "tenant_id",
+            "membership_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "team_members_display_name_length": {
+          "name": "team_members_display_name_length",
+          "value": "length(btrim(\"rebook\".\"team_members\".\"display_name\")) between 1 and 80"
+        },
+        "team_members_travel_range": {
+          "name": "team_members_travel_range",
+          "value": "\"rebook\".\"team_members\".\"travel_before_minutes\" between 0 and 240 and \"rebook\".\"team_members\".\"travel_after_minutes\" between 0 and 240"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.working_hour_breaks": {
+      "name": "working_hour_breaks",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "working_hours_id": {
+          "name": "working_hours_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "working_hour_breaks_tenant_id_tenants_id_fk": {
+          "name": "working_hour_breaks_tenant_id_tenants_id_fk",
+          "tableFrom": "working_hour_breaks",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "working_hour_breaks_working_hours_fk": {
+          "name": "working_hour_breaks_working_hours_fk",
+          "tableFrom": "working_hour_breaks",
+          "columnsFrom": [
+            "tenant_id",
+            "working_hours_id"
+          ],
+          "tableTo": "working_hours",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "working_hour_breaks_tenant_id_id_unique": {
+          "name": "working_hour_breaks_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "working_hour_breaks_start_before_end": {
+          "name": "working_hour_breaks_start_before_end",
+          "value": "\"rebook\".\"working_hour_breaks\".\"start_time\" < \"rebook\".\"working_hour_breaks\".\"end_time\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.working_hours": {
+      "name": "working_hours",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_member_id": {
+          "name": "team_member_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "location_id": {
+          "name": "location_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "weekday": {
+          "name": "weekday",
+          "type": "smallint",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "start_time": {
+          "name": "start_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "end_time": {
+          "name": "end_time",
+          "type": "time",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "working_hours_tenant_id_location_id_idx": {
+          "name": "working_hours_tenant_id_location_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "location_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "working_hours_tenant_id_tenants_id_fk": {
+          "name": "working_hours_tenant_id_tenants_id_fk",
+          "tableFrom": "working_hours",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "working_hours_team_member_fk": {
+          "name": "working_hours_team_member_fk",
+          "tableFrom": "working_hours",
+          "columnsFrom": [
+            "tenant_id",
+            "team_member_id"
+          ],
+          "tableTo": "team_members",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "working_hours_location_fk": {
+          "name": "working_hours_location_fk",
+          "tableFrom": "working_hours",
+          "columnsFrom": [
+            "tenant_id",
+            "location_id"
+          ],
+          "tableTo": "locations",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "working_hours_tenant_id_id_unique": {
+          "name": "working_hours_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "working_hours_weekday_valid": {
+          "name": "working_hours_weekday_valid",
+          "value": "\"rebook\".\"working_hours\".\"weekday\" between 1 and 7"
+        },
+        "working_hours_start_before_end": {
+          "name": "working_hours_start_before_end",
+          "value": "\"rebook\".\"working_hours\".\"start_time\" < \"rebook\".\"working_hours\".\"end_time\""
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.custom_field_definitions": {
+      "name": "custom_field_definitions",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity": {
+          "name": "entity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "label": {
+          "name": "label",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "field_type": {
+          "name": "field_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "options": {
+          "name": "options",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'[]'::jsonb"
+        },
+        "required": {
+          "name": "required",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "health_free_text_override": {
+          "name": "health_free_text_override",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "custom_field_definitions_tenant_id_tenants_id_fk": {
+          "name": "custom_field_definitions_tenant_id_tenants_id_fk",
+          "tableFrom": "custom_field_definitions",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "custom_field_definitions_tenant_id_id_unique": {
+          "name": "custom_field_definitions_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "custom_field_definitions_tenant_id_id_entity_unique": {
+          "name": "custom_field_definitions_tenant_id_id_entity_unique",
+          "columns": [
+            "tenant_id",
+            "id",
+            "entity"
+          ],
+          "nullsNotDistinct": false
+        },
+        "custom_field_definitions_tenant_id_entity_key_unique": {
+          "name": "custom_field_definitions_tenant_id_entity_key_unique",
+          "columns": [
+            "tenant_id",
+            "entity",
+            "key"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "custom_field_definitions_entity_valid": {
+          "name": "custom_field_definitions_entity_valid",
+          "value": "\"rebook\".\"custom_field_definitions\".\"entity\" in ('client', 'service')"
+        },
+        "custom_field_definitions_type_valid": {
+          "name": "custom_field_definitions_type_valid",
+          "value": "\"rebook\".\"custom_field_definitions\".\"field_type\" in ('text', 'long_text', 'number', 'boolean', 'date', 'select', 'multi_select')"
+        },
+        "custom_field_definitions_key_format": {
+          "name": "custom_field_definitions_key_format",
+          "value": "\"rebook\".\"custom_field_definitions\".\"key\" ~ '^[a-z][a-z0-9_]{0,39}$'"
+        },
+        "custom_field_definitions_label_length": {
+          "name": "custom_field_definitions_label_length",
+          "value": "length(btrim(\"rebook\".\"custom_field_definitions\".\"label\")) between 1 and 80"
+        },
+        "custom_field_definitions_options_shape": {
+          "name": "custom_field_definitions_options_shape",
+          "value": "jsonb_typeof(\"rebook\".\"custom_field_definitions\".\"options\") = 'array' and (\"rebook\".\"custom_field_definitions\".\"field_type\" in ('select', 'multi_select')) = (jsonb_array_length(\"rebook\".\"custom_field_definitions\".\"options\") > 0)"
+        },
+        "custom_field_definitions_override_only_free_text": {
+          "name": "custom_field_definitions_override_only_free_text",
+          "value": "not \"rebook\".\"custom_field_definitions\".\"health_free_text_override\" or \"rebook\".\"custom_field_definitions\".\"field_type\" in ('text', 'long_text')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.custom_field_values": {
+      "name": "custom_field_values",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "definition_id": {
+          "name": "definition_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity": {
+          "name": "entity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "service_id": {
+          "name": "service_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "value": {
+          "name": "value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "custom_field_values_tenant_id_service_id_idx": {
+          "name": "custom_field_values_tenant_id_service_id_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "service_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "custom_field_values_tenant_id_tenants_id_fk": {
+          "name": "custom_field_values_tenant_id_tenants_id_fk",
+          "tableFrom": "custom_field_values",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        },
+        "custom_field_values_definition_fk": {
+          "name": "custom_field_values_definition_fk",
+          "tableFrom": "custom_field_values",
+          "columnsFrom": [
+            "tenant_id",
+            "definition_id",
+            "entity"
+          ],
+          "tableTo": "custom_field_definitions",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id",
+            "entity"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        },
+        "custom_field_values_service_fk": {
+          "name": "custom_field_values_service_fk",
+          "tableFrom": "custom_field_values",
+          "columnsFrom": [
+            "tenant_id",
+            "service_id"
+          ],
+          "tableTo": "services",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "tenant_id",
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "cascade"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "custom_field_values_tenant_id_id_unique": {
+          "name": "custom_field_values_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "custom_field_values_tenant_id_definition_id_service_id_unique": {
+          "name": "custom_field_values_tenant_id_definition_id_service_id_unique",
+          "columns": [
+            "tenant_id",
+            "definition_id",
+            "service_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "custom_field_values_subject": {
+          "name": "custom_field_values_subject",
+          "value": "\"rebook\".\"custom_field_values\".\"entity\" = 'service' and \"rebook\".\"custom_field_values\".\"service_id\" is not null"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.audit_logs": {
+      "name": "audit_logs",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_kind": {
+          "name": "actor_kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "actor_id": {
+          "name": "actor_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "request_id": {
+          "name": "request_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "action": {
+          "name": "action",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_type": {
+          "name": "entity_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "entity_id": {
+          "name": "entity_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "before": {
+          "name": "before",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "after": {
+          "name": "after",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "audit_logs_tenant_id_created_at_idx": {
+          "name": "audit_logs_tenant_id_created_at_idx",
+          "columns": [
+            {
+              "expression": "tenant_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "audit_logs_tenant_id_tenants_id_fk": {
+          "name": "audit_logs_tenant_id_tenants_id_fk",
+          "tableFrom": "audit_logs",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "audit_logs_tenant_id_id_unique": {
+          "name": "audit_logs_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "audit_logs_actor_kind_valid": {
+          "name": "audit_logs_actor_kind_valid",
+          "value": "\"rebook\".\"audit_logs\".\"actor_kind\" in ('user', 'customer', 'anonymous', 'worker', 'system')"
+        },
+        "audit_logs_action_format": {
+          "name": "audit_logs_action_format",
+          "value": "\"rebook\".\"audit_logs\".\"action\" ~ '^[a-z_]+(?:\\.[a-z_]+)+$'"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.idempotency_keys": {
+      "name": "idempotency_keys",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "request_hash": {
+          "name": "request_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "response_status": {
+          "name": "response_status",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "response_body": {
+          "name": "response_body",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "idempotency_keys_tenant_id_tenants_id_fk": {
+          "name": "idempotency_keys_tenant_id_tenants_id_fk",
+          "tableFrom": "idempotency_keys",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "idempotency_keys_tenant_id_id_unique": {
+          "name": "idempotency_keys_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "idempotency_keys_tenant_id_scope_key_unique": {
+          "name": "idempotency_keys_tenant_id_scope_key_unique",
+          "columns": [
+            "tenant_id",
+            "scope",
+            "key"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": true
+    },
+    "rebook.locations": {
+      "name": "locations",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time_zone": {
+          "name": "time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "locations_tenant_id_tenants_id_fk": {
+          "name": "locations_tenant_id_tenants_id_fk",
+          "tableFrom": "locations",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "locations_tenant_id_id_unique": {
+          "name": "locations_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "locations_name_length": {
+          "name": "locations_name_length",
+          "value": "length(btrim(\"rebook\".\"locations\".\"name\")) between 1 and 120"
+        },
+        "locations_time_zone_valid": {
+          "name": "locations_time_zone_valid",
+          "value": "rebook.is_time_zone(\"rebook\".\"locations\".\"time_zone\")"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.tenant_feature_flags": {
+      "name": "tenant_feature_flags",
+      "schema": "rebook",
+      "columns": {
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "flag": {
+          "name": "flag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "enabled": {
+          "name": "enabled",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "tenant_feature_flags_tenant_id_tenants_id_fk": {
+          "name": "tenant_feature_flags_tenant_id_tenants_id_fk",
+          "tableFrom": "tenant_feature_flags",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "tenant_feature_flags_pkey": {
+          "name": "tenant_feature_flags_pkey",
+          "columns": [
+            "tenant_id",
+            "flag"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "tenant_feature_flags_flag_format": {
+          "name": "tenant_feature_flags_flag_format",
+          "value": "\"rebook\".\"tenant_feature_flags\".\"flag\" ~ '^[a-z][a-z0-9_]{1,63}$'"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.tenant_invitations": {
+      "name": "tenant_invitations",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token_hash": {
+          "name": "token_hash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "invited_by": {
+          "name": "invited_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "accepted_at": {
+          "name": "accepted_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "accepted_by": {
+          "name": "accepted_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "tenant_invitations_tenant_id_tenants_id_fk": {
+          "name": "tenant_invitations_tenant_id_tenants_id_fk",
+          "tableFrom": "tenant_invitations",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "tenant_invitations_tenant_id_id_unique": {
+          "name": "tenant_invitations_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "tenant_invitations_tenant_id_token_hash_unique": {
+          "name": "tenant_invitations_tenant_id_token_hash_unique",
+          "columns": [
+            "tenant_id",
+            "token_hash"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "tenant_invitations_email_format": {
+          "name": "tenant_invitations_email_format",
+          "value": "\"rebook\".\"tenant_invitations\".\"email\" = lower(btrim(\"rebook\".\"tenant_invitations\".\"email\")) and \"rebook\".\"tenant_invitations\".\"email\" ~ '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$' and length(\"rebook\".\"tenant_invitations\".\"email\") <= 320"
+        },
+        "tenant_invitations_role_valid": {
+          "name": "tenant_invitations_role_valid",
+          "value": "\"rebook\".\"tenant_invitations\".\"role\" in ('owner', 'staff')"
+        },
+        "tenant_invitations_token_hash_format": {
+          "name": "tenant_invitations_token_hash_format",
+          "value": "\"rebook\".\"tenant_invitations\".\"token_hash\" ~ '^[0-9a-f]{64}$'"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.tenant_memberships": {
+      "name": "tenant_memberships",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "role": {
+          "name": "role",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "revoked_at": {
+          "name": "revoked_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "tenant_memberships_user_id_idx": {
+          "name": "tenant_memberships_user_id_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "with": {},
+          "method": "btree",
+          "concurrently": false
+        }
+      },
+      "foreignKeys": {
+        "tenant_memberships_tenant_id_tenants_id_fk": {
+          "name": "tenant_memberships_tenant_id_tenants_id_fk",
+          "tableFrom": "tenant_memberships",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "tableTo": "tenants",
+          "schemaTo": "rebook",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "tenant_memberships_tenant_id_id_unique": {
+          "name": "tenant_memberships_tenant_id_id_unique",
+          "columns": [
+            "tenant_id",
+            "id"
+          ],
+          "nullsNotDistinct": false
+        },
+        "tenant_memberships_tenant_id_user_id_unique": {
+          "name": "tenant_memberships_tenant_id_user_id_unique",
+          "columns": [
+            "tenant_id",
+            "user_id"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "tenant_memberships_role_valid": {
+          "name": "tenant_memberships_role_valid",
+          "value": "\"rebook\".\"tenant_memberships\".\"role\" in ('owner', 'staff')"
+        }
+      },
+      "isRLSEnabled": true
+    },
+    "rebook.tenants": {
+      "name": "tenants",
+      "schema": "rebook",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "rebook.uuid_generate_v7()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "business_type": {
+          "name": "business_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "time_zone": {
+          "name": "time_zone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "tenants_slug_unique": {
+          "name": "tenants_slug_unique",
+          "columns": [
+            "slug"
+          ],
+          "nullsNotDistinct": false
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "tenants_name_length": {
+          "name": "tenants_name_length",
+          "value": "length(btrim(\"rebook\".\"tenants\".\"name\")) between 1 and 120"
+        },
+        "tenants_slug_format": {
+          "name": "tenants_slug_format",
+          "value": "\"rebook\".\"tenants\".\"slug\" ~ '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'"
+        },
+        "tenants_business_type_valid": {
+          "name": "tenants_business_type_valid",
+          "value": "\"rebook\".\"tenants\".\"business_type\" in ('event_planner', 'midwife', 'other_timed')"
+        },
+        "tenants_time_zone_valid": {
+          "name": "tenants_time_zone_valid",
+          "value": "rebook.is_time_zone(\"rebook\".\"tenants\".\"time_zone\")"
+        }
+      },
+      "isRLSEnabled": true
+    }
+  },
+  "enums": {},
+  "schemas": {
+    "rebook": "rebook"
+  },
+  "views": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

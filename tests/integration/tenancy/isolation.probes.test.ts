@@ -8,10 +8,10 @@ import { connectAppDb, connectOwnerDb, type AppDb } from '../../helpers/db';
 import { expectSqlState, PERMISSION_DENIED } from '../../helpers/sql-state';
 import {
   actorFor,
+  type ConfiguredTenant,
+  type ConfiguredTenantPair,
   contextFor,
-  seedTenantPair,
-  type SeededTenant,
-  type TenantPair,
+  seedConfiguredTenantPair,
 } from '../../helpers/tenant-fixtures';
 
 /**
@@ -23,8 +23,8 @@ import {
  *   (the existence-oracle case);
  * - a user who legitimately holds memberships in A and B cannot change or revoke the B one from
  *   tenant A's context, nor insert into B;
- * - a brand-new connection (setting never installed, reads back NULL rather than '') returns
- *   zero rows for every table;
+ * - a transaction with no context installed (on a fresh backend or one a tenant transaction
+ *   used before, as behind a pooler) reads no tenant and returns zero rows for every table;
  * - anon and authenticated are denied on writes, not only on reads;
  * - the login role can enter the two runtime roles and nothing else.
  *
@@ -42,6 +42,16 @@ const touch: Readonly<Record<string, ReturnType<typeof sql>>> = {
   tenant_feature_flags: sql`enabled = false`,
   idempotency_keys: sql`request_hash = 'touched'`,
   rate_limits: sql`count = 0`,
+  services: sql`name = 'touched'`,
+  team_members: sql`display_name = 'touched'`,
+  staff_services: sql`created_at = now()`,
+  working_hours: sql`end_time = '18:00'`,
+  working_hour_breaks: sql`end_time = '12:30'`,
+  availability_exceptions: sql`ends_at = ends_at + interval '1 hour'`,
+  team_member_service_areas: sql`postcode_district = 'E1'`,
+  daily_capacity_rules: sql`max_events_per_date = 1`,
+  custom_field_definitions: sql`label = 'touched'`,
+  custom_field_values: sql`value = '"Green"'::jsonb`,
 };
 
 /** Plain-SQL twin of `touch` for statements issued through postgres.js rather than drizzle. */
@@ -54,10 +64,20 @@ const touchLiteral: Readonly<Record<string, string>> = {
   tenant_feature_flags: 'enabled = false',
   idempotency_keys: "request_hash = 'touched'",
   rate_limits: 'count = 0',
+  services: "name = 'touched'",
+  team_members: "display_name = 'touched'",
+  staff_services: 'created_at = now()',
+  working_hours: "end_time = '18:00'",
+  working_hour_breaks: "end_time = '12:30'",
+  availability_exceptions: "ends_at = ends_at + interval '1 hour'",
+  team_member_service_areas: "postcode_district = 'E1'",
+  daily_capacity_rules: 'max_events_per_date = 1',
+  custom_field_definitions: "label = 'touched'",
+  custom_field_values: 'value = \'"Green"\'::jsonb',
 };
 
 /** The seeded primary key of a tenant in each table that has an `id` column. */
-function seededIdIn(table: string, seed: SeededTenant): string {
+function seededIdIn(table: string, seed: ConfiguredTenant): string {
   const ids: Record<string, string> = {
     tenants: seed.id,
     locations: seed.locationId,
@@ -65,6 +85,14 @@ function seededIdIn(table: string, seed: SeededTenant): string {
     tenant_invitations: seed.invitationId,
     audit_logs: seed.auditLogId,
     idempotency_keys: seed.idempotencyKeyId,
+    services: seed.serviceId,
+    team_members: seed.teamMemberId,
+    working_hours: seed.workingHoursId,
+    working_hour_breaks: seed.workingHourBreakId,
+    availability_exceptions: seed.exceptionId,
+    daily_capacity_rules: seed.capacityRuleId,
+    custom_field_definitions: seed.customFieldDefinitionId,
+    custom_field_values: seed.customFieldValueId,
   };
   const id = ids[table];
   if (id === undefined) {
@@ -76,7 +104,7 @@ function seededIdIn(table: string, seed: SeededTenant): string {
 }
 
 /** A minimal valid row per tenant-owned table, tagged with the given tenant. */
-function sampleInsert(table: string, seed: SeededTenant): ReturnType<typeof sql> {
+function sampleInsert(table: string, seed: ConfiguredTenant): ReturnType<typeof sql> {
   switch (table) {
     case 'locations':
       return sql`insert into rebook.locations (tenant_id, name, time_zone) values (${seed.id}, 'Probe', 'Europe/London')`;
@@ -91,7 +119,10 @@ function sampleInsert(table: string, seed: SeededTenant): ReturnType<typeof sql>
     case 'idempotency_keys':
       return sql`insert into rebook.idempotency_keys (tenant_id, scope, key, request_hash, expires_at) values (${seed.id}, 'probe', ${`worker-${seed.slug}`}, 'h', now() + interval '1 minute')`;
     default:
-      throw new Error(`no sample insert for rebook.${table}; extend isolation.probes.test.ts`);
+      // The Phase 3 configuration tables grant the worker SELECT only, so the privilege check
+      // refuses any insert before a row is built. If the worker ever gains INSERT here, this
+      // statement fails differently (NOT NULL) and the table needs a real sample row.
+      return sql`insert into rebook.${sql.identifier(table)} default values`;
   }
 }
 
@@ -113,12 +144,12 @@ const workerTenantTables = workerTables.filter((table) => table.hasTenantId);
 
 let owner: DbClient;
 let app: AppDb;
-let pair: TenantPair;
+let pair: ConfiguredTenantPair;
 
 beforeAll(async () => {
   owner = await connectOwnerDb();
   app = await connectAppDb();
-  pair = await seedTenantPair(owner, 'probe');
+  pair = await seedConfiguredTenantPair(owner, 'probe');
 });
 
 afterAll(async () => {
@@ -150,6 +181,17 @@ describe('catalogue coverage (probes)', () => {
       tenants: { app: ['SELECT', 'INSERT', 'UPDATE'], worker: ['SELECT', 'INSERT'] },
       // Platform-level counters for rate limiting (no tenant_id): the app alone, incl. sweeping.
       rate_limits: { app: all, worker: [] },
+      // Phase 3 configuration: the back office edits it; jobs only read it.
+      services: { app: all, worker: ['SELECT'] },
+      team_members: { app: all, worker: ['SELECT'] },
+      staff_services: { app: all, worker: ['SELECT'] },
+      working_hours: { app: all, worker: ['SELECT'] },
+      working_hour_breaks: { app: all, worker: ['SELECT'] },
+      availability_exceptions: { app: all, worker: ['SELECT'] },
+      team_member_service_areas: { app: all, worker: ['SELECT'] },
+      daily_capacity_rules: { app: all, worker: ['SELECT'] },
+      custom_field_definitions: { app: all, worker: ['SELECT'] },
+      custom_field_values: { app: all, worker: ['SELECT'] },
     };
     expect(Object.fromEntries(appTables.map((t) => [t.table, t.appPrivileges]))).toEqual(
       Object.fromEntries(Object.entries(expected).map(([table, p]) => [table, p.app])),
@@ -367,31 +409,45 @@ describe('a user with memberships in both tenants, acting in tenant A', () => {
   });
 });
 
-describe('a brand-new connection with no context ever installed', () => {
-  it('reads the setting as NULL and sees zero rows in every table, without an error', async () => {
-    const fresh = await connectAppDb({ max: 1 });
+describe('a transaction with no context installed', () => {
+  // Written to hold behind a transaction pooler as well as locally. A pooler hands out backends
+  // that earlier clients used, and a setting once set reads back as '' (not NULL) on such a
+  // backend, so the probe asserts the form the policies use, nullif(…, ''), never "is null" on
+  // the raw setting. It runs twice on one pooled connection: before any context was installed
+  // there and after a tenant A transaction, so both readings are covered on every run.
+  it('reads no tenant and sees zero rows in every tenant-scoped table, without an error', async () => {
+    const single = await connectAppDb({ max: 1 });
     try {
-      const [state] = await fresh.client.sql.begin(async (tx) => {
-        await tx`set local role rebook_app`;
-        return tx<{ never_set: boolean }[]>`
-          select current_setting('app.tenant_id', true) is null as never_set
-        `;
-      });
-      expect(state?.never_set).toBe(true);
-
       // Every tenant-scoped table (tenants included). Platform tables without tenant_id
       // (rate_limits) are readable by design and are covered by the platform tests.
       const tenantScoped = appTables.filter((t) => t.hasTenantId || t.table === 'tenants');
       expect(tenantScoped.length).toBe(appTables.length - 1);
-      for (const { table } of tenantScoped) {
-        const [row] = await fresh.client.sql.begin(async (tx) => {
+
+      const probe = async (when: string) => {
+        const [state] = await single.client.sql.begin(async (tx) => {
           await tx`set local role rebook_app`;
-          return tx<{ n: number }[]>`select count(*)::int as n from rebook.${tx(table)}`;
+          return tx<{ no_tenant: boolean }[]>`
+            select nullif(current_setting('app.tenant_id', true), '') is null as no_tenant
+          `;
         });
-        expect(row?.n, table).toBe(0);
-      }
+        expect(state?.no_tenant, when).toBe(true);
+        for (const { table } of tenantScoped) {
+          const [row] = await single.client.sql.begin(async (tx) => {
+            await tx`set local role rebook_app`;
+            return tx<{ n: number }[]>`select count(*)::int as n from rebook.${tx(table)}`;
+          });
+          expect(row?.n, `${when}: rebook.${table}`).toBe(0);
+        }
+      };
+
+      await probe('before any context on this connection');
+      const seen = await single.tenancy.withTenant(contextFor(pair.a.id), (tx) =>
+        tx.db.execute<{ n: number }>(sql`select count(*)::int as n from rebook.locations`),
+      );
+      expect(seen[0]?.n).toBeGreaterThan(0);
+      await probe('after a tenant A transaction on the same connection');
     } finally {
-      await fresh.close();
+      await single.close();
     }
   });
 });

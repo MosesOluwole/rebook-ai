@@ -1,42 +1,80 @@
+import Link from 'next/link';
+
+import { listTeamMembers } from '@/modules/booking';
 import { can, listMembers, listOpenInvitations } from '@/modules/tenancy';
 
+import { ActionForm, SelectInput, SubmitButton, TextInput } from '../../../_components/forms';
 import { getTenancy } from '../../../_lib/tenancy';
 import { loadWorkspace } from '../_lib/workspace';
-import { revokeInvitationAction, revokeMemberAction } from './actions';
+import { createTeamMemberAction, revokeInvitationAction, revokeMemberAction } from './actions';
 import { InviteForm } from './invite-form';
 
 export const dynamic = 'force-dynamic';
-
-const first = (value: string | string[] | undefined): string | undefined =>
-  Array.isArray(value) ? value[0] : value;
 
 const dateFormat = new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeZone: 'UTC' });
 
 export default async function TeamPage({
   params,
-  searchParams,
 }: {
   readonly params: Promise<{ readonly slug: string }>;
-  readonly searchParams: Promise<{ readonly notice?: string | string[] }>;
 }) {
-  const [{ slug }, query] = await Promise.all([params, searchParams]);
+  const { slug } = await params;
   const { ctx } = await loadWorkspace(slug);
   const isOwner = ctx.role !== null && can(ctx.role, 'members.invite');
-  const tenancy = getTenancy();
-  const { members, invitations } = await tenancy.withTenant(ctx, async (tx) => ({
+  const canManageTeam = ctx.role !== null && can(ctx.role, 'team.manage');
+  const { members, invitations, teamMembers } = await getTenancy().withTenant(ctx, async (tx) => ({
     members: await listMembers(tx),
     invitations: isOwner ? await listOpenInvitations(tx) : [],
+    teamMembers: await listTeamMembers(tx),
   }));
-  const notice = first(query.notice);
+  const linked = new Set(teamMembers.map((member) => member.membershipId));
+  const memberLabel = (userId: string, role: string) =>
+    `${userId === ctx.actorId ? 'You' : `Member ${userId.slice(0, 8)}`} (${role})`;
 
   return (
     <>
       <h1>Team</h1>
-      {notice !== undefined && (
-        <p className="notice" role="status">
-          {notice}
-        </p>
-      )}
+
+      <section className="card" aria-labelledby="team-members-heading">
+        <h2 id="team-members-heading">Team members</h2>
+        <p className="muted">The people who deliver your services. They need not sign in.</p>
+        {teamMembers.length === 0 ? (
+          <p className="muted">No team members yet.</p>
+        ) : (
+          <ul className="plain">
+            {teamMembers.map((member) => (
+              <li key={member.id}>
+                <Link href={`/app/${slug}/team/${member.id}`}>{member.displayName}</Link>
+                {!member.active && <span className="muted"> · inactive</span>}
+                {member.membershipId !== null && <span className="muted"> · signs in</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {canManageTeam && (
+          <ActionForm action={createTeamMemberAction} label="Add team member">
+            <input type="hidden" name="slug" value={slug} />
+            <TextInput name="displayName" label="Display name" required maxLength={80} />
+            <SelectInput
+              name="membershipId"
+              label="Signs in as (optional)"
+              defaultValue=""
+              options={[
+                { value: '', label: 'Nobody: does not sign in' },
+                ...members
+                  .filter((member) => !linked.has(member.id))
+                  .map((member) => ({
+                    value: member.id,
+                    label: memberLabel(member.userId, member.role),
+                  })),
+              ]}
+            />
+            <div>
+              <SubmitButton>Add team member</SubmitButton>
+            </div>
+          </ActionForm>
+        )}
+      </section>
 
       <section className="card" aria-labelledby="members-heading">
         <h2 id="members-heading">Members</h2>
@@ -62,13 +100,11 @@ export default async function TeamPage({
                   {isOwner && (
                     <td>
                       {!isYou && (
-                        <form action={revokeMemberAction}>
+                        <ActionForm action={revokeMemberAction} className="inline-form">
                           <input type="hidden" name="slug" value={slug} />
                           <input type="hidden" name="id" value={member.id} />
-                          <button type="submit" className="danger">
-                            Remove
-                          </button>
-                        </form>
+                          <SubmitButton className="danger">Remove</SubmitButton>
+                        </ActionForm>
                       )}
                     </td>
                   )}
@@ -103,13 +139,11 @@ export default async function TeamPage({
                       <td>{invitation.role}</td>
                       <td>{dateFormat.format(invitation.expiresAt)}</td>
                       <td>
-                        <form action={revokeInvitationAction}>
+                        <ActionForm action={revokeInvitationAction} className="inline-form">
                           <input type="hidden" name="slug" value={slug} />
                           <input type="hidden" name="id" value={invitation.id} />
-                          <button type="submit" className="danger">
-                            Revoke
-                          </button>
-                        </form>
+                          <SubmitButton className="danger">Revoke</SubmitButton>
+                        </ActionForm>
                       </td>
                     </tr>
                   ))}

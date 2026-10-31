@@ -1,5 +1,9 @@
+import { randomUUID } from 'node:crypto';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createService, createTeamMember, replaceWorkingHours } from '@/modules/booking';
+import { businessTypeGuard, createCustomFieldDefinition } from '@/modules/crm';
 import {
   auditLogsRepository,
   listMembers,
@@ -59,7 +63,41 @@ const ownerOnlyCommands: Record<
   'members.revoke': (tx) => revokeMember(tx, pair.a.membershipId),
   'flags.update': (tx) => toggleFeatureFlag(tx, 'permission_probe', true),
   'settings.update': (tx) =>
-    updateBusinessSettings(tx, { name: 'Renamed', businessType: 'midwife', timeZone: 'UTC' }),
+    updateBusinessSettings(
+      tx,
+      { name: 'Renamed', businessType: 'midwife', timeZone: 'UTC' },
+      businessTypeGuard,
+    ),
+  // Phase 3. The ids need not exist: the permission check comes before any read.
+  'services.manage': (tx) =>
+    createService(tx, {
+      name: 'Probe',
+      durationMinutes: 30,
+      bufferBeforeMinutes: 0,
+      bufferAfterMinutes: 0,
+      price: '10',
+      currency: 'GBP',
+    }),
+  'team.manage': (tx) => createTeamMember(tx, { displayName: 'Probe' }),
+  'schedules.manage': (tx) =>
+    replaceWorkingHours(tx, randomUUID(), pair.a.locationId, {
+      days: { '1': { ranges: [{ start: '09:00', end: '17:00' }] } },
+    }),
+  'custom_fields.manage': (tx) =>
+    createCustomFieldDefinition(tx, {
+      entity: 'service',
+      key: 'probe',
+      label: 'Probe',
+      fieldType: 'number',
+    }),
+  'custom_fields.health_override': (tx) =>
+    createCustomFieldDefinition(tx, {
+      entity: 'client',
+      key: 'probe_note',
+      label: 'Probe note',
+      fieldType: 'text',
+      healthFreeTextOverride: true,
+    }),
 };
 
 /** Owner-only read and revoke paths that share a permission with a command above. */

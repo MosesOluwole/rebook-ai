@@ -43,6 +43,30 @@ export interface TenantPair {
   cleanup(): Promise<void>;
 }
 
+/**
+ * One row in every Phase 3 configuration table (booking and crm). Seeded only on request: a
+ * tenant with a service can no longer change its business type, which several Phase 2 tests do.
+ */
+export interface SeededConfiguration {
+  readonly serviceId: string;
+  readonly teamMemberId: string;
+  readonly workingHoursId: string;
+  readonly workingHourBreakId: string;
+  readonly exceptionId: string;
+  readonly capacityRuleId: string;
+  readonly customFieldDefinitionId: string;
+  readonly customFieldValueId: string;
+  readonly postcodeDistrict: string;
+}
+
+export type ConfiguredTenant = SeededTenant & SeededConfiguration;
+
+export interface ConfiguredTenantPair {
+  readonly a: ConfiguredTenant;
+  readonly b: ConfiguredTenant;
+  cleanup(): Promise<void>;
+}
+
 /** Inserts a confirmed Supabase Auth user directly (GoTrue is not involved). */
 export async function createAuthUser(owner: DbClient, label = 'user'): Promise<FixtureUser> {
   const id = randomUUID();
@@ -80,6 +104,116 @@ export async function seedTenantPair(owner: DbClient, label = 'iso'): Promise<Te
       await removeTenants(owner, [a.id, b.id]);
       await removeAuthUsers(owner, [a.userId, a.spareUserId, b.userId, b.spareUserId]);
     },
+  };
+}
+
+/** Two tenants as `seedTenantPair`, plus one row of every configuration table each. */
+export async function seedConfiguredTenantPair(
+  owner: DbClient,
+  label = 'cfg',
+): Promise<ConfiguredTenantPair> {
+  const pair = await seedTenantPair(owner, label);
+  return {
+    a: { ...pair.a, ...(await seedConfiguration(owner, pair.a)) },
+    b: { ...pair.b, ...(await seedConfiguration(owner, pair.b)) },
+    cleanup: () => pair.cleanup(),
+  };
+}
+
+async function seedConfiguration(
+  owner: DbClient,
+  seed: SeededTenant,
+): Promise<SeededConfiguration> {
+  const returningId = async (statement: Promise<{ id: string }[]>, what: string) => {
+    const [row] = await statement;
+    if (row === undefined) {
+      throw new Error(`fixture: ${what} insert returned no row`);
+    }
+    return row.id;
+  };
+  const serviceId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.services (tenant_id, name, booking_mode, duration_minutes, price, currency, location_type, published)
+      values (${seed.id}, 'Fixture service', 'timed', 60, 45.00, 'GBP', 'clinic', true)
+      returning id
+    `,
+    'service',
+  );
+  const teamMemberId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.team_members (tenant_id, membership_id, display_name)
+      values (${seed.id}, ${seed.membershipId}, 'Fixture practitioner')
+      returning id
+    `,
+    'team member',
+  );
+  await owner.sql`
+    insert into rebook.staff_services (tenant_id, team_member_id, service_id)
+    values (${seed.id}, ${teamMemberId}, ${serviceId})
+  `;
+  const workingHoursId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.working_hours (tenant_id, team_member_id, location_id, weekday, start_time, end_time)
+      values (${seed.id}, ${teamMemberId}, ${seed.locationId}, 1, '09:00', '17:00')
+      returning id
+    `,
+    'working hours',
+  );
+  const workingHourBreakId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.working_hour_breaks (tenant_id, working_hours_id, start_time, end_time)
+      values (${seed.id}, ${workingHoursId}, '12:00', '13:00')
+      returning id
+    `,
+    'break',
+  );
+  const exceptionId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.availability_exceptions (tenant_id, kind, team_member_id, location_id, starts_at, ends_at)
+      values (${seed.id}, 'time_off', ${teamMemberId}, ${seed.locationId}, '2030-01-07T09:00:00Z', '2030-01-08T17:00:00Z')
+      returning id
+    `,
+    'exception',
+  );
+  const postcodeDistrict = 'SW1A';
+  await owner.sql`
+    insert into rebook.team_member_service_areas (tenant_id, team_member_id, postcode_district)
+    values (${seed.id}, ${teamMemberId}, ${postcodeDistrict})
+  `;
+  const capacityRuleId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.daily_capacity_rules (tenant_id, team_member_id, max_events_per_date)
+      values (${seed.id}, ${teamMemberId}, 2)
+      returning id
+    `,
+    'capacity rule',
+  );
+  const customFieldDefinitionId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.custom_field_definitions (tenant_id, entity, key, label, field_type, options)
+      values (${seed.id}, 'service', 'room', 'Room', 'select', '["Blue", "Green"]'::jsonb)
+      returning id
+    `,
+    'custom field definition',
+  );
+  const customFieldValueId = await returningId(
+    owner.sql<{ id: string }[]>`
+      insert into rebook.custom_field_values (tenant_id, definition_id, entity, service_id, value)
+      values (${seed.id}, ${customFieldDefinitionId}, 'service', ${serviceId}, '"Blue"'::jsonb)
+      returning id
+    `,
+    'custom field value',
+  );
+  return {
+    serviceId,
+    teamMemberId,
+    workingHoursId,
+    workingHourBreakId,
+    exceptionId,
+    capacityRuleId,
+    customFieldDefinitionId,
+    customFieldValueId,
+    postcodeDistrict,
   };
 }
 
@@ -159,6 +293,22 @@ export async function removeTenants(owner: DbClient, tenantIds: readonly string[
     return;
   }
   const ids = [...tenantIds];
+  // Phase 3 configuration, children before parents (cascades would cover most of it; explicit is
+  // clearer and does not depend on them).
+  for (const table of [
+    'custom_field_values',
+    'custom_field_definitions',
+    'daily_capacity_rules',
+    'team_member_service_areas',
+    'availability_exceptions',
+    'working_hour_breaks',
+    'working_hours',
+    'staff_services',
+    'team_members',
+    'services',
+  ]) {
+    await owner.sql`delete from rebook.${owner.sql(table)} where tenant_id = any(${ids}::uuid[])`;
+  }
   await owner.sql`delete from rebook.tenant_invitations where tenant_id = any(${ids}::uuid[])`;
   await owner.sql`delete from rebook.idempotency_keys where tenant_id = any(${ids}::uuid[])`;
   await owner.sql`delete from rebook.tenant_feature_flags where tenant_id = any(${ids}::uuid[])`;

@@ -148,6 +148,129 @@ describe('schema check', () => {
     expect(findings.filter((f) => f.table === 'zz_composite_fk')).toEqual([]);
   });
 
+  // Phase 3: "every new child table's foreign keys to tenant-owned parents include tenant_id".
+  // Each case below has tenant_id somewhere and passed the Phase 1 rule (composite, first column
+  // tenant_id) or is a shape a hand-written migration could plausibly produce.
+  async function protectedTable(tx: SqlHandle, name: string, body: string): Promise<void> {
+    await tx.unsafe(`create table rebook.${name} (${body})`);
+    await tx.unsafe(`alter table rebook.${name} enable row level security`);
+    await tx.unsafe(`alter table rebook.${name} force row level security`);
+    await tx.unsafe(`create policy p on rebook.${name} for all to rebook_app using (true)`);
+  }
+
+  it('fails for a composite key that pairs tenant_id with the parent id instead of its tenant_id', async () => {
+    const findings = await findingsWith(async (tx) => {
+      // A unique (id, tenant_id) on the parent makes the swapped key legal SQL.
+      await tx`create unique index zz_locations_id_tenant on rebook.locations (id, tenant_id)`;
+      await protectedTable(
+        tx,
+        'zz_swapped_fk',
+        `id uuid primary key default rebook.uuid_generate_v7(),
+         tenant_id uuid not null references rebook.tenants (id),
+         location_id uuid not null,
+         unique (tenant_id, id),
+         constraint zz_swapped_fk_location foreign key (tenant_id, location_id)
+           references rebook.locations (id, tenant_id)`,
+      );
+    });
+    const problems = findings.filter((f) => f.table === 'zz_swapped_fk').map((f) => f.problem);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(
+      /zz_swapped_fk_location to rebook\.locations \(tenant_id, location_id\).*must map tenant_id to its tenant_id \(references id, tenant_id\)/,
+    );
+  });
+
+  it('accepts the same pair written in the other column order', async () => {
+    const findings = await findingsWith(async (tx) => {
+      await tx`create unique index zz_locations_id_tenant on rebook.locations (id, tenant_id)`;
+      await protectedTable(
+        tx,
+        'zz_reordered_fk',
+        `id uuid primary key default rebook.uuid_generate_v7(),
+         tenant_id uuid not null references rebook.tenants (id),
+         location_id uuid not null,
+         unique (tenant_id, id),
+         foreign key (location_id, tenant_id) references rebook.locations (id, tenant_id)`,
+      );
+    });
+    expect(findings.filter((f) => f.table === 'zz_reordered_fk')).toEqual([]);
+  });
+
+  it('fails for a composite key into a tenant-owned parent that leaves tenant_id out', async () => {
+    const findings = await findingsWith(async (tx) => {
+      await tx`create unique index zz_locations_id_name on rebook.locations (id, name)`;
+      await protectedTable(
+        tx,
+        'zz_no_tenant_fk',
+        `id uuid primary key default rebook.uuid_generate_v7(),
+         tenant_id uuid not null references rebook.tenants (id),
+         location_id uuid not null,
+         location_name text not null,
+         unique (tenant_id, id),
+         constraint zz_no_tenant_fk_location foreign key (location_id, location_name)
+           references rebook.locations (id, name)`,
+      );
+    });
+    const problems = findings.filter((f) => f.table === 'zz_no_tenant_fk').map((f) => f.problem);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/must map tenant_id to its tenant_id/);
+  });
+
+  it('fails for a composite key into a rebook table that has no tenant_id', async () => {
+    const findings = await findingsWith(async (tx) => {
+      await protectedTable(
+        tx,
+        'zz_platform_fk',
+        `id uuid primary key default rebook.uuid_generate_v7(),
+         tenant_id uuid not null references rebook.tenants (id),
+         rate_key text not null,
+         rate_window timestamptz not null,
+         unique (tenant_id, id),
+         constraint zz_platform_fk_rate foreign key (rate_key, rate_window)
+           references rebook.rate_limits (key, window_start)`,
+      );
+    });
+    const problems = findings.filter((f) => f.table === 'zz_platform_fk').map((f) => f.problem);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/zz_platform_fk_rate to rebook\.rate_limits/);
+  });
+
+  it('fails for a single-column tenant_id key to a table other than tenants', async () => {
+    const findings = await findingsWith(async (tx) => {
+      await protectedTable(
+        tx,
+        'zz_tenant_to_location',
+        `id uuid primary key default rebook.uuid_generate_v7(),
+         tenant_id uuid not null references rebook.locations (id)`,
+      );
+    });
+    const problems = findings
+      .filter((f) => f.table === 'zz_tenant_to_location')
+      .map((f) => f.problem);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/to rebook\.locations \(tenant_id\)/);
+  });
+
+  it('accepts every real Phase 3 child key, including the three-column custom field key', async () => {
+    const real = await owner.sql<{ name: string }[]>`
+      select k.conname as name from pg_catalog.pg_constraint k
+      join pg_catalog.pg_class c on c.oid = k.conrelid
+      join pg_catalog.pg_namespace n on n.oid = c.relnamespace
+      where n.nspname = 'rebook' and k.contype = 'f' and array_length(k.conkey, 1) > 1
+      order by k.conname
+    `;
+    expect(real.map((r) => r.name)).toEqual(
+      expect.arrayContaining([
+        'custom_field_values_definition_fk',
+        'staff_services_service_fk',
+        'staff_services_team_member_fk',
+        'team_members_membership_fk',
+        'working_hour_breaks_working_hours_fk',
+      ]),
+    );
+    expect(await checkSchema(owner.sql)).toEqual([]);
+  });
+
   it('fails when the schema itself is granted to a Data API role', async () => {
     const findings = await findingsWith(async (tx) => {
       await tx`grant usage on schema rebook to anon`;

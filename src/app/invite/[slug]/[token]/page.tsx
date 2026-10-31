@@ -3,12 +3,10 @@ import { notFound } from 'next/navigation';
 
 import { invitationTokenSchema, isSlug } from '@/modules/tenancy';
 
+import { RouteForm, SubmitButton } from '../../../_components/forms';
 import { requireUser } from '../../../_lib/session';
 
 export const dynamic = 'force-dynamic';
-
-const first = (value: string | string[] | undefined): string | undefined =>
-  Array.isArray(value) ? value[0] : value;
 
 /**
  * Landing page of an invite link. Acceptance happens on the button, not on the GET, so a mail
@@ -17,21 +15,14 @@ const first = (value: string | string[] | undefined): string | undefined =>
  */
 export default async function InvitePage({
   params,
-  searchParams,
 }: {
   readonly params: Promise<{ readonly slug: string; readonly token: string }>;
-  readonly searchParams: Promise<{
-    readonly verify?: string | string[];
-    readonly member?: string | string[];
-  }>;
 }) {
-  const [{ slug, token }, query] = await Promise.all([params, searchParams]);
+  const { slug, token } = await params;
   if (!isSlug(slug) || !invitationTokenSchema.safeParse(token).success) {
     notFound();
   }
   const user = await requireUser(`/invite/${slug}/${token}`);
-  const needsVerification = first(query.verify) === '1';
-  const alreadyMember = first(query.member) === '1';
 
   return (
     <main>
@@ -39,21 +30,15 @@ export default async function InvitePage({
       <p>
         Join the business at <code>/app/{slug}</code> as <strong>{user.email}</strong>.
       </p>
-      {needsVerification && (
-        <p className="notice error" role="alert">
-          Verify your email address first, then come back to this link.
-        </p>
-      )}
-      {alreadyMember && (
-        <p className="notice" role="status">
-          You are already a member of this business. <Link href={`/app/${slug}`}>Open it</Link>.
-        </p>
-      )}
-      <form action={`/invite/${slug}/${token}/accept`} method="post">
-        <input type="hidden" name="slug" value={slug} />
-        <input type="hidden" name="token" value={token} />
-        <button type="submit">Accept invitation</button>
-      </form>
+      {/* Not verified yet, already a member, or a bad link: answered as form state. */}
+      <RouteForm endpoint={`/invite/${slug}/${token}/accept`} label="Accept invitation">
+        <div>
+          <SubmitButton>Accept invitation</SubmitButton>
+        </div>
+      </RouteForm>
+      <p className="muted">
+        <Link href={`/app/${slug}`}>Open the business</Link> if you are already a member.
+      </p>
       <p className="muted">
         Not you? Sign out from the workspace menu and sign in with the invited address.
       </p>

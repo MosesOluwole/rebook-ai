@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { businessTypeGuard } from '@/modules/crm';
 import {
   auditLogsRepository,
   isFeatureEnabled,
@@ -355,7 +356,11 @@ describe('driver errors never carry bound parameters out of the runner', () => {
     let caught: unknown;
     try {
       await app.tenancy.withTenant(ctx, (tx) =>
-        updateBusinessSettings(tx, { name: 'X', businessType: 'salon', timeZone: 'UTC' }),
+        updateBusinessSettings(
+          tx,
+          { name: 'X', businessType: 'salon', timeZone: 'UTC' },
+          businessTypeGuard,
+        ),
       );
     } catch (error) {
       caught = error;
