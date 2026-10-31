@@ -7,34 +7,35 @@ import {
   auditLogsRepository,
   isFeatureEnabled,
   locationsRepository,
-  membershipsRepository,
   NestedTenantTransactionError,
-  setFeatureFlag,
+  PermissionDeniedError,
+  requireFlag,
+  FeatureDisabledError,
   TenantContextError,
-  tenantsRepository,
+  toggleFeatureFlag,
+  updateBusinessSettings,
   ValidationError,
 } from '@/modules/tenancy';
-import { isUuidV7 } from '@/shared/kernel/uuid-v7';
 import { type DbClient } from '@/shared/db/client';
 
 import { connectAppDb, connectOwnerDb, type AppDb } from '../../helpers/db';
-import { expectSqlState, UNIQUE_VIOLATION } from '../../helpers/sql-state';
+import { sqlState, UNIQUE_VIOLATION } from '../../helpers/sql-state';
 import {
+  actorFor,
   contextFor,
-  removeTenants,
   seedTenantPair,
   type TenantPair,
 } from '../../helpers/tenant-fixtures';
 
 /**
- * withTenant behaviour: role switch, context settings, validation, rollback, and the pooled
- * connection case (docs/phases.md Phase 1), plus the createTenant path that depends on them.
+ * withTenant and withUserContext behaviour: role switch, context settings, validation, rollback,
+ * the pooled connection case (docs/phases.md Phase 1), the nesting guard, and the audited feature
+ * flag toggle (Phase 2 acceptance criterion).
  */
 
 let owner: DbClient;
 let app: AppDb;
 let pair: TenantPair;
-const createdTenantIds: string[] = [];
 
 beforeAll(async () => {
   owner = await connectOwnerDb();
@@ -43,7 +44,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await removeTenants(owner, createdTenantIds);
   await pair.cleanup();
   await app.close();
   await owner.close();
@@ -68,10 +68,25 @@ describe('withTenant', () => {
     expect(state).toEqual({
       role: 'rebook_app',
       tenant: pair.a.id,
-      actor: ctx.actorId,
-      kind: 'user',
+      actor: '',
+      kind: 'system',
       request: 'req-42',
     });
+  });
+
+  it('installs the user as actor for an authorised context', async () => {
+    const ctx = await app.tenancy.resolveTenantForUser(pair.a.slug, actorFor(pair.a));
+    const [state] = await app.tenancy.withTenant(ctx, (tx) =>
+      tx.db.execute<SessionState>(sessionState),
+    );
+    expect(state).toMatchObject({
+      role: 'rebook_app',
+      tenant: pair.a.id,
+      actor: pair.a.userId,
+      kind: 'user',
+    });
+    expect(ctx.role).toBe('owner');
+    expect(ctx.grant).toBe('membership');
   });
 
   it('withWorkerTenant runs as rebook_worker and stores an absent actor as empty', async () => {
@@ -84,27 +99,27 @@ describe('withTenant', () => {
     expect(state?.kind).toBe('worker');
   });
 
-  it('exposes the validated context and role on the handle', async () => {
+  it('exposes the validated settings, the original context and the role on the handle', async () => {
     const ctx = contextFor(pair.a.id);
     const seen = await app.tenancy.withTenant(ctx, (tx) =>
-      Promise.resolve({ ctx: tx.ctx, role: tx.role }),
+      Promise.resolve({ ctx: tx.ctx, context: tx.context, role: tx.role }),
     );
-    expect(seen).toEqual({ ctx, role: 'rebook_app' });
+    expect(seen).toEqual({ ctx, context: ctx, role: 'rebook_app' });
   });
 
   it('rejects an invalid context before opening a transaction', async () => {
     await expect(
       app.tenancy.withTenant(
-        { tenantId: 'not-a-uuid', actorKind: 'user', actorId: null, requestId: 'r' },
+        { tenantId: 'not-a-uuid', actorKind: 'system', actorId: null, requestId: 'r' },
         () => Promise.resolve('ran'),
       ),
     ).rejects.toBeInstanceOf(TenantContextError);
     await expect(
       app.tenancy.withTenant(
-        { tenantId: pair.a.id, actorKind: 'user', actorId: null, requestId: 'r' },
+        { tenantId: pair.a.id, actorKind: 'customer', actorId: null, requestId: 'r' },
         () => Promise.resolve('ran'),
       ),
-    ).rejects.toThrow(/actorId is required when actorKind is 'user'/);
+    ).rejects.toThrow(/actorId is required when actorKind is 'customer'/);
   });
 
   it('rolls everything back when the work throws', async () => {
@@ -129,6 +144,11 @@ describe('withTenant', () => {
         return app.tenancy.withTenant(contextFor(pair.a.id), () => Promise.resolve('inner ran'));
       }),
     ).rejects.toBeInstanceOf(NestedTenantTransactionError);
+    await expect(
+      app.tenancy.withUserContext(actorFor(pair.a), () =>
+        app.tenancy.withTenant(contextFor(pair.a.id), () => Promise.resolve('inner ran')),
+      ),
+    ).rejects.toBeInstanceOf(NestedTenantTransactionError);
     const names = await app.tenancy.withTenant(contextFor(pair.a.id), async (tx) =>
       (await locationsRepository.list(tx)).map((location) => location.name),
     );
@@ -142,6 +162,50 @@ describe('withTenant', () => {
     `;
     expect(state?.role).toBe('rebook_authenticator');
     expect(state?.tenant ?? '').toBe('');
+  });
+});
+
+describe('withUserContext', () => {
+  it('runs as rebook_app with the actor installed and an empty tenant', async () => {
+    const actor = actorFor(pair.a, { requestId: 'user-req-7' });
+    const [state] = await app.tenancy.withUserContext(actor, (tx) =>
+      tx.db.execute<SessionState>(sessionState),
+    );
+    expect(state).toEqual({
+      role: 'rebook_app',
+      tenant: '',
+      actor: pair.a.userId,
+      kind: 'user',
+      request: 'user-req-7',
+    });
+  });
+
+  it('exposes the user and request id on the handle', async () => {
+    const actor = actorFor(pair.a);
+    const seen = await app.tenancy.withUserContext(actor, (tx) =>
+      Promise.resolve({ user: tx.user, requestId: tx.requestId }),
+    );
+    expect(seen).toEqual({ user: actor.user, requestId: actor.requestId });
+  });
+
+  it('rejects an invalid actor before opening a transaction', async () => {
+    await expect(
+      app.tenancy.withUserContext(
+        { user: { id: 'nope', email: 'x@example.invalid', emailVerified: true }, requestId: 'r' },
+        () => Promise.resolve('ran'),
+      ),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('sees zero rows in tenant-scoped tables (every tenant policy fails closed)', async () => {
+    const [row] = await app.tenancy.withUserContext(actorFor(pair.a), (tx) =>
+      tx.db.execute<{ locations: number; flags: number; audit: number }>(sql`
+        select (select count(*) from rebook.locations)::int as locations,
+               (select count(*) from rebook.tenant_feature_flags)::int as flags,
+               (select count(*) from rebook.audit_logs)::int as audit
+      `),
+    );
+    expect(row).toEqual({ locations: 0, flags: 0, audit: 0 });
   });
 });
 
@@ -176,70 +240,34 @@ describe('one pooled connection', () => {
       await single.close();
     }
   });
-});
 
-describe('createTenant', () => {
-  const caller = {
-    actorKind: 'system' as const,
-    actorId: null,
-    requestId: `create-${randomUUID()}`,
-  };
-
-  it('generates a UUIDv7 id, inserts inside its own context and writes the first audit entry', async () => {
-    const slug = `created-${randomUUID().slice(0, 8)}`;
-    const tenant = await app.tenancy.createTenant(
-      { name: '  New Practice ', slug, timeZone: 'Europe/London' },
-      caller,
-    );
-    createdTenantIds.push(tenant.id);
-
-    expect(isUuidV7(tenant.id)).toBe(true);
-    expect(tenant.name).toBe('New Practice');
-
-    const seen = await app.tenancy.withTenant(contextFor(tenant.id), async (tx) => ({
-      tenant: await tenantsRepository.findCurrent(tx),
-      audit: await auditLogsRepository.listRecent(tx),
-    }));
-    expect(seen.tenant?.slug).toBe(slug);
-    expect(seen.audit).toHaveLength(1);
-    expect(seen.audit[0]).toMatchObject({
-      action: 'tenant.created',
-      entityType: 'tenant',
-      entityId: tenant.id,
-      actorKind: 'system',
-      actorId: null,
-      requestId: caller.requestId,
-      after: { name: 'New Practice', slug, timeZone: 'Europe/London' },
-    });
-  });
-
-  it('rejects invalid input before touching the database', async () => {
-    await expect(
-      app.tenancy.createTenant({ name: 'X', slug: 'Bad Slug', timeZone: 'Europe/London' }, caller),
-    ).rejects.toBeInstanceOf(ValidationError);
-  });
-
-  it('surfaces a duplicate slug as a unique violation', async () => {
-    await expectSqlState(
-      app.tenancy.createTenant(
-        { name: 'Dup', slug: pair.a.slug, timeZone: 'Europe/London' },
-        caller,
-      ),
-      UNIQUE_VIOLATION,
-    );
+  it('a user context after a tenant context inherits nothing from it', async () => {
+    const single = await connectAppDb({ max: 1 });
+    try {
+      await single.tenancy.withTenant(contextFor(pair.a.id), (tx) => tx.db.execute(sql`select 1`));
+      const [state] = await single.tenancy.withUserContext(actorFor(pair.b), (tx) =>
+        tx.db.execute<{ tenant: string; n: number }>(
+          sql`select current_setting('app.tenant_id', true) as tenant, (select count(*) from rebook.locations)::int as n`,
+        ),
+      );
+      expect(state).toEqual({ tenant: '', n: 0 });
+    } finally {
+      await single.close();
+    }
   });
 });
 
 describe('feature flags', () => {
-  it('toggles a flag and audits before and after in the same transaction', async () => {
+  it('toggles a flag as the owner and audits actor, before and after in the same transaction', async () => {
     const flag = `probe_flag_${randomUUID().slice(0, 8).replace(/-/g, '')}`;
-    const ctx = contextFor(pair.a.id);
+    const actor = actorFor(pair.a, { requestId: `flags-${randomUUID()}` });
+    const ctx = await app.tenancy.resolveTenantForUser(pair.a.slug, actor);
 
-    const first = await app.tenancy.withTenant(ctx, (tx) => setFeatureFlag(tx, flag, true));
-    expect(first).toEqual({ before: null, after: true });
+    const first = await app.tenancy.withTenant(ctx, (tx) => toggleFeatureFlag(tx, flag, true));
+    expect(first).toEqual({ flag, before: null, after: true });
 
-    const second = await app.tenancy.withTenant(ctx, (tx) => setFeatureFlag(tx, flag, false));
-    expect(second).toEqual({ before: true, after: false });
+    const second = await app.tenancy.withTenant(ctx, (tx) => toggleFeatureFlag(tx, flag, false));
+    expect(second).toEqual({ flag, before: true, after: false });
 
     const state = await app.tenancy.withTenant(ctx, async (tx) => ({
       enabled: await isFeatureEnabled(tx, flag),
@@ -260,58 +288,102 @@ describe('feature flags', () => {
     ]);
     expect(
       state.audit.every(
-        (entry) => entry.actorId === ctx.actorId && entry.requestId === ctx.requestId,
+        (entry) =>
+          entry.actorKind === 'user' &&
+          entry.actorId === pair.a.userId &&
+          entry.requestId === actor.requestId,
       ),
     ).toBe(true);
   });
 
-  it('rejects a malformed flag name before touching the database', async () => {
+  it('requireFlag gates a feature and reads unset flags as off', async () => {
+    const ctx = await app.tenancy.resolveTenantForUser(pair.a.slug, actorFor(pair.a));
     await expect(
-      app.tenancy.withTenant(contextFor(pair.a.id), (tx) => setFeatureFlag(tx, 'Bad Flag', true)),
+      app.tenancy.withTenant(ctx, (tx) => requireFlag(tx, 'never_set_flag')),
+    ).rejects.toBeInstanceOf(FeatureDisabledError);
+    await app.tenancy.withTenant(ctx, (tx) => toggleFeatureFlag(tx, 'gated_probe', true));
+    await expect(
+      app.tenancy.withTenant(ctx, (tx) => requireFlag(tx, 'gated_probe')),
+    ).resolves.toBeUndefined();
+  });
+
+  it('is owner-only: a system actor has no role and is denied', async () => {
+    await expect(
+      app.tenancy.withTenant(contextFor(pair.a.id), (tx) => toggleFeatureFlag(tx, 'x_flag', true)),
+    ).rejects.toBeInstanceOf(PermissionDeniedError);
+  });
+
+  it('rejects a malformed flag name before touching the database', async () => {
+    const ctx = await app.tenancy.resolveTenantForUser(pair.a.slug, actorFor(pair.a));
+    await expect(
+      app.tenancy.withTenant(ctx, (tx) => toggleFeatureFlag(tx, 'Bad Flag', true)),
     ).rejects.toBeInstanceOf(ValidationError);
   });
 });
 
-describe('tenant_memberships visibility by user', () => {
-  it('lets a user see their memberships across tenants, and nothing for another user', async () => {
-    // Owner-only arrangement: give tenant A's user a second membership in tenant B.
-    await owner.sql`
-      insert into rebook.tenant_memberships (tenant_id, user_id, role)
-      values (${pair.b.id}, ${pair.a.userId}, 'staff')
-    `;
-
-    const mine = await app.tenancy.withTenant(
-      contextFor(pair.a.id, { actorId: pair.a.userId }),
-      (tx) => membershipsRepository.listForCurrentActor(tx),
-    );
-    expect(mine.map((membership) => membership.tenantId).sort()).toEqual(
-      [pair.a.id, pair.b.id].sort(),
-    );
-
-    const someoneElse = await app.tenancy.withTenant(
-      contextFor(pair.a.id, { actorId: randomUUID() }),
-      (tx) => membershipsRepository.listForCurrentActor(tx),
-    );
-    expect(someoneElse).toEqual([]);
-
-    const anonymous = await app.tenancy.withTenant(
-      contextFor(pair.a.id, { actorKind: 'anonymous', actorId: null }),
-      (tx) => membershipsRepository.listForCurrentActor(tx),
-    );
-    expect(anonymous).toEqual([]);
+describe('driver errors never carry bound parameters out of the runner', () => {
+  it('redacts params, messages, details and stacks of a failed query while keeping the SQLSTATE', async () => {
+    const marker = `secret-${randomUUID()}`;
+    let caught: unknown;
+    try {
+      await app.tenancy.withTenant(contextFor(pair.a.id), (tx) =>
+        tx.db.execute(sql`select ${marker}::int`),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    // Everything a logger could print: own properties at every level of the cause chain.
+    const everything: string[] = [];
+    let current: unknown = caught;
+    for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+      everything.push(
+        JSON.stringify(current, Object.getOwnPropertyNames(current)),
+        current.stack ?? '',
+        current.message,
+      );
+      current = (current as { cause?: unknown }).cause;
+    }
+    expect(everything.join('\n')).not.toContain(marker);
+    expect((caught as Error).message).toContain('params: [redacted]');
+    // The cause chain still identifies the failure (22P02: invalid text representation).
+    expect(sqlState(caught)).toBe('22P02');
   });
 
-  it('still hides tenant B memberships of other users from tenant A', async () => {
-    const rows = await app.tenancy.withTenant(
-      contextFor(pair.a.id, { actorId: pair.a.userId }),
-      (tx) =>
-        tx.db.execute<{ tenant_id: string; user_id: string }>(
-          sql`select tenant_id, user_id from rebook.tenant_memberships`,
+  it('leaves typed domain errors untouched, quotes and all', async () => {
+    const ctx = await app.tenancy.resolveTenantForUser(pair.a.slug, actorFor(pair.a));
+    let caught: unknown;
+    try {
+      await app.tenancy.withTenant(ctx, (tx) =>
+        updateBusinessSettings(tx, { name: 'X', businessType: 'salon', timeZone: 'UTC' }),
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ValidationError);
+    expect((caught as Error).message).toMatch(/businessType: .*"owner"|businessType: .*option/);
+    expect((caught as Error).message).not.toContain('[redacted]');
+  });
+
+  it('keeps the constraint name of a unique violation so callers can still map it', async () => {
+    let caught: unknown;
+    try {
+      await app.tenancy.withTenant(contextFor(pair.a.id), (tx) =>
+        tx.db.execute(
+          sql`insert into rebook.tenant_feature_flags (tenant_id, flag, enabled) values (${pair.a.id}, ${pair.a.flag}, true)`,
         ),
-    );
-    expect(rows.every((row) => row.tenant_id === pair.a.id || row.user_id === pair.a.userId)).toBe(
-      true,
-    );
-    expect(rows.some((row) => row.user_id === pair.b.userId)).toBe(false);
+      );
+    } catch (error) {
+      caught = error;
+    }
+    expect(sqlState(caught)).toBe(UNIQUE_VIOLATION);
+    const cause = (caught as { cause?: Error & { constraint_name?: string } }).cause;
+    expect(cause?.constraint_name).toBe('tenant_feature_flags_pkey');
+    expect(cause?.name).toBe('PostgresError');
+    // Postgres's detail ("Key (tenant_id, flag)=(…) already exists") must not survive.
+    const serialised =
+      cause === undefined ? '' : JSON.stringify(cause, Object.getOwnPropertyNames(cause));
+    expect(serialised).not.toContain(pair.a.flag);
+    expect(cause?.stack ?? '').not.toContain(pair.a.flag);
   });
 });

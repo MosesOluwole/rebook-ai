@@ -5,6 +5,9 @@ import { EnvValidationError, parseEnv } from './env';
 const valid = {
   NODE_ENV: 'test',
   APP_DATABASE_URL: 'postgresql://rebook_authenticator:secret@127.0.0.1:54322/postgres',
+  SUPABASE_URL: 'http://127.0.0.1:54321',
+  SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_synthetic_value_for_tests',
+  CLIENT_IP_HEADER: 'x-forwarded-for',
 } as const;
 
 describe('parseEnv', () => {
@@ -25,13 +28,17 @@ describe('parseEnv', () => {
     const env = parseEnv({ ...valid, PATH: '/usr/bin', HOME: '/home/x' });
     expect(Object.keys(env).sort()).toEqual([
       'APP_DATABASE_URL',
+      'CLIENT_IP_HEADER',
       'NEXT_PUBLIC_APP_URL',
       'NODE_ENV',
+      'SUPABASE_PUBLISHABLE_KEY',
+      'SUPABASE_URL',
     ]);
   });
 
   it('fails fast with a readable message when a required variable is missing', () => {
-    const attempt = () => parseEnv({ NODE_ENV: 'test' });
+    const { APP_DATABASE_URL: _omitted, ...rest } = valid;
+    const attempt = () => parseEnv(rest);
     expect(attempt).toThrow(EnvValidationError);
     expect(attempt).toThrow(/APP_DATABASE_URL: missing/);
     expect(attempt).toThrow(/Postgres connection string/);
@@ -60,6 +67,26 @@ describe('parseEnv', () => {
     expect(() => parseEnv({ ...valid, NODE_ENV: 'staging' })).toThrow(/NODE_ENV: /);
   });
 
+  it('lower-cases the client IP header name and rejects anything that is not a header name', () => {
+    expect(parseEnv({ ...valid, CLIENT_IP_HEADER: ' X-Real-IP ' }).CLIENT_IP_HEADER).toBe(
+      'x-real-ip',
+    );
+    expect(() => parseEnv({ ...valid, CLIENT_IP_HEADER: 'x forwarded for' })).toThrow(
+      /CLIENT_IP_HEADER: .*header name/,
+    );
+    expect(() => parseEnv({ ...valid, CLIENT_IP_HEADER: '' })).toThrow(/CLIENT_IP_HEADER: missing/);
+  });
+
+  it('requires the Supabase Auth URL and publishable key and validates their shape', () => {
+    expect(() => parseEnv({ ...valid, SUPABASE_URL: '' })).toThrow(/SUPABASE_URL: missing/);
+    expect(() => parseEnv({ ...valid, SUPABASE_URL: 'ftp://x' })).toThrow(
+      /SUPABASE_URL: .*API gateway/,
+    );
+    expect(() => parseEnv({ ...valid, SUPABASE_PUBLISHABLE_KEY: 'short' })).toThrow(
+      /SUPABASE_PUBLISHABLE_KEY: .*publishable or anon key/,
+    );
+  });
+
   it('reports every problem at once', () => {
     try {
       parseEnv({ NODE_ENV: 'nope', NEXT_PUBLIC_APP_URL: 'ftp://x' });
@@ -67,8 +94,15 @@ describe('parseEnv', () => {
     } catch (error) {
       expect(error).toBeInstanceOf(EnvValidationError);
       const variables = (error as EnvValidationError).issues.map((issue) => issue.variable).sort();
-      expect(variables).toEqual(['APP_DATABASE_URL', 'NEXT_PUBLIC_APP_URL', 'NODE_ENV']);
-      expect((error as Error).message).toMatch(/3 problems/);
+      expect(variables).toEqual([
+        'APP_DATABASE_URL',
+        'CLIENT_IP_HEADER',
+        'NEXT_PUBLIC_APP_URL',
+        'NODE_ENV',
+        'SUPABASE_PUBLISHABLE_KEY',
+        'SUPABASE_URL',
+      ]);
+      expect((error as Error).message).toMatch(/6 problems/);
     }
   });
 

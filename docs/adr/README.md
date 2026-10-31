@@ -7,4 +7,6 @@ marked superseded with a link to its replacement; never rewrite history.
 | ADR                                          | Title                                                  | Status   |
 | -------------------------------------------- | ------------------------------------------------------ | -------- |
 | [ADR-001](./ADR-001-stack.md)                | Stack and tooling for the MVP                          | Accepted |
-| [ADR-002](./ADR-002-schema-roles-context.md) | Application schema, database roles and request context | Proposed |
+| [ADR-002](./ADR-002-schema-roles-context.md) | Application schema, database roles and request context | Accepted |
+| [ADR-003](./ADR-003-time-zones.md)           | Time zone names are canonicalised with Intl            | Proposed |
+| [ADR-004](./ADR-004-auth-sessions.md)        | Authentication, sessions and the authorised context    | Proposed |

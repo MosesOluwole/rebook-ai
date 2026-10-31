@@ -251,6 +251,19 @@ otp_expiry = 3600
 # subject = "You have been invited"
 # content_path = "./supabase/templates/invite.html"
 
+# Rebook AI (Phase 2): every email link carries a token hash that the app's own
+# /auth/confirm route verifies server-side (docs/adr/ADR-004-auth-sessions.md), so a link works
+# in any browser and the browser never talks to Supabase directly. The hosted project must use
+# the same templates. Invitations to a business are the app's own tenant_invitations, not
+# Supabase invites, so there is no invite template.
+[auth.email.template.magic_link]
+subject = "Sign in to Rebook AI"
+content_path = "./supabase/templates/magic_link.html"
+
+[auth.email.template.confirmation]
+subject = "Confirm your Rebook AI account"
+content_path = "./supabase/templates/confirmation.html"
+
 # Uncomment to customize notification email template
 # [auth.email.notification.password_changed]
 # enabled = true

@@ -79,7 +79,8 @@ const TABLE_PRIVILEGES = [
 ];
 
 function code(value: string | null): string {
-  return value === null ? '' : `\`${value.replace(/\|/g, '\\|')}\``;
+  // Multi-line expressions (policies with subqueries) would break the Markdown table row.
+  return value === null ? '' : `\`${value.replace(/\s+/g, ' ').trim().replace(/\|/g, '\\|')}\``;
 }
 
 export async function renderSchemaDoc(sql: Sql): Promise<string> {

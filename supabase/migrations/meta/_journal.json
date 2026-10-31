@@ -29,6 +29,27 @@
       "when": 1793317920514,
       "tag": "20261029235200_tenancy_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1793382552444,
+      "tag": "20261030174911_tenancy_memberships_user_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1793382552982,
+      "tag": "20261030174912_tenancy_business_type_invitations",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793382553606,
+      "tag": "20261030174913_tenancy_slug_resolution_invitation_policies",
+      "breakpoints": true
     }
   ]
 }

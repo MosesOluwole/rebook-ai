@@ -2,85 +2,116 @@ import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { isIanaTimeZone, ValidationError } from '@/modules/tenancy';
+import { canonicalTimeZone, ValidationError } from '@/modules/tenancy';
 import { type DbClient } from '@/shared/db/client';
 
 import { connectAppDb, connectOwnerDb, type AppDb } from '../../helpers/db';
 import { sqlState } from '../../helpers/sql-state';
-import { removeTenants } from '../../helpers/tenant-fixtures';
+import {
+  actorFor,
+  createAuthUser,
+  type FixtureUser,
+  removeAuthUsers,
+  removeTenants,
+} from '../../helpers/tenant-fixtures';
 
 /**
- * CLAUDE.md: "Validation: Zod at every boundary" and "Errors: typed, never swallowed". The
- * tenant input schema (src/modules/tenancy/domain/tenant.ts) and the database CHECK
- * (rebook.is_time_zone, migration part 1) must agree, otherwise a value that passes the module
- * boundary dies inside the transaction as a raw constraint violation the caller cannot map to a
- * field error. Intl.DateTimeFormat accepts time zone names case-insensitively; pg_timezone_names
- * is case-sensitive, so the two disagree on non-canonical spellings.
+ * CLAUDE.md: "Validation: Zod at every boundary" and "Errors: typed, never swallowed". The time
+ * zone rule (docs/adr/ADR-003-time-zones.md) and the database CHECK (rebook.is_time_zone) must
+ * agree: everything the rule accepts is stored in a form the database accepts, and everything
+ * the rule rejects fails as a typed ValidationError before any transaction opens. Phase 2
+ * acceptance criterion: wrong-case and alias time zones follow the documented rule and are never
+ * stored as typed.
  */
 
 let owner: DbClient;
 let app: AppDb;
+let user: FixtureUser;
 const createdTenantIds: string[] = [];
-
-const caller = { actorKind: 'system' as const, actorId: null, requestId: `tz-${randomUUID()}` };
 
 beforeAll(async () => {
   owner = await connectOwnerDb({ max: 1 });
   app = await connectAppDb();
+  user = await createAuthUser(owner, 'tz');
 });
 
 afterAll(async () => {
   await removeTenants(owner, createdTenantIds);
+  await removeAuthUsers(owner, [user.id]);
   await app.close();
   await owner.close();
 });
 
-describe('createTenant time zone validation agrees with the database constraint', () => {
-  it.each(['europe/london', 'EUROPE/LONDON', 'utc'])(
-    'rejects the non-canonical spelling %s with a typed ValidationError, not a CHECK violation',
+async function onboard(timeZone: string) {
+  const tenant = await app.tenancy.completeOnboarding(
+    { name: `Zone Probe ${randomUUID().slice(0, 6)}`, businessType: 'other_timed', timeZone },
+    actorFor(user),
+  );
+  createdTenantIds.push(tenant.id);
+  return tenant;
+}
+
+describe('onboarding stores the canonical time zone, never the typed one', () => {
+  it.each([
+    ['europe/london', 'Europe/London'],
+    ['EUROPE/LONDON', 'Europe/London'],
+    ['America/New_york', 'America/New_York'],
+    ['GB', 'Europe/London'],
+    ['US/Eastern', 'America/New_York'],
+    ['utc', 'UTC'],
+    ['Etc/UTC', 'UTC'],
+  ])('stores %s as %s on the tenant and its default location', async (typed, stored) => {
+    const tenant = await onboard(typed);
+    expect(tenant.timeZone).toBe(stored);
+    const [row] = await owner.sql<{ tenant_tz: string; location_tz: string }[]>`
+      select t.time_zone as tenant_tz, l.time_zone as location_tz
+      from rebook.tenants t join rebook.locations l on l.tenant_id = t.id
+      where t.id = ${tenant.id}
+    `;
+    expect(row).toEqual({ tenant_tz: stored, location_tz: stored });
+  });
+
+  it.each(['EST', 'CET', 'Etc/GMT+1', 'Mars/Olympus', '', 'London'])(
+    'rejects %s with a typed ValidationError, not a CHECK violation',
     async (timeZone) => {
-      const slug = `tz-${randomUUID().slice(0, 8)}`;
       let caught: unknown;
       try {
-        const tenant = await app.tenancy.createTenant(
-          { name: 'Zone Probe', slug, timeZone },
-          caller,
-        );
-        createdTenantIds.push(tenant.id);
+        await onboard(timeZone);
       } catch (error) {
         caught = error;
       }
-      // Either outcome below is acceptable only if it is the typed error: a raw SQLSTATE 23514
-      // means the Zod schema let through a value the database refuses.
+      // A raw SQLSTATE 23514 would mean the rule let through a value the database refuses.
       expect(sqlState(caught), 'database constraint reached').toBeUndefined();
       expect(caught).toBeInstanceOf(ValidationError);
+      expect((caught as Error).message).toMatch(/timeZone: must be an IANA time zone name/);
     },
   );
-
-  it('accepts the canonical spelling Europe/London', async () => {
-    const slug = `tz-${randomUUID().slice(0, 8)}`;
-    const tenant = await app.tenancy.createTenant(
-      { name: 'Zone Probe', slug, timeZone: 'Europe/London' },
-      caller,
-    );
-    createdTenantIds.push(tenant.id);
-    expect(tenant.timeZone).toBe('Europe/London');
-  });
 });
 
-describe('the set of time zones the app accepts is a subset of what the database accepts', () => {
-  it('rebook.is_time_zone() returns true for every Intl-supported zone that passes isIanaTimeZone', async () => {
-    const appAccepted = Intl.supportedValuesOf('timeZone').filter(isIanaTimeZone);
-    expect(appAccepted.length).toBeGreaterThan(300);
+describe('the set of time zones the app stores is a subset of what the database accepts', () => {
+  it('rebook.is_time_zone() is true for the stored form of every Intl-supported zone and every alias the rule converts', async () => {
+    const inputs = [
+      ...Intl.supportedValuesOf('timeZone'),
+      'GB',
+      'US/Eastern',
+      'Japan',
+      'Europe/Kyiv',
+      'Asia/Kolkata',
+      'utc',
+      'Etc/GMT',
+    ];
+    const stored = [...new Set(inputs.map(canonicalTimeZone))].filter(
+      (zone): zone is string => zone !== null,
+    );
+    expect(stored.length).toBeGreaterThan(300);
 
     const rows = await app.client.sql.begin(async (tx) => {
       await tx`set local role rebook_app`;
       return tx<{ zone: string; ok: boolean }[]>`
-        select z as zone, rebook.is_time_zone(z) as ok from unnest(${appAccepted}::text[]) as z
+        select z as zone, rebook.is_time_zone(z) as ok from unnest(${stored}::text[]) as z
       `;
     });
-    const rejectedByDatabase = rows.filter((row) => !row.ok).map((row) => row.zone);
-    expect(rows).toHaveLength(appAccepted.length);
-    expect(rejectedByDatabase).toEqual([]);
+    expect(rows).toHaveLength(stored.length);
+    expect(rows.filter((row) => !row.ok).map((row) => row.zone)).toEqual([]);
   });
 });

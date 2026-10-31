@@ -107,25 +107,33 @@ Privacy and legal work for the midwife pilot is parked by decision and must be r
 
 **What.**
 
-- Supabase Auth for staff: email magic link and password, secure cookies, session refresh in middleware.
-- Registration: create user, tenant with unique slug, IANA time zone, default location and owner membership in one transaction.
-- Business type at onboarding: `event_planner`, `midwife`, `other_timed`. It sets terminology (client or patient; booking, enquiry or appointment), default services and the `is_health_business` flag.
-- Tenant resolution from the URL slug checked against an active membership; never from headers or the request body.
-- Roles for MVP: `owner`, `staff`. Permission matrix `can(role, permission)` checked in every application command.
-- Invite a team member by email; accept the invite to join the tenant.
-- Feature flags read server-side with `requireFlag(tenant, flag)`; flag changes audited.
-- Back-office shell: navigation, tenant switcher, empty dashboard, mobile layout at 375 px.
+- **Phase 1 follow-ups, as new migrations (never edit applied ones):** the memberships select policy's actor branch also requires `app.actor_kind = 'user'`; `tenant_memberships.user_id` references `auth.users(id) on delete cascade`; a CI check fails if any migration already on the default branch is modified; time zones are canonicalised in the domain layer with `Intl` before saving (wrong case and legacy aliases converted or rejected by a documented rule, never stored as typed).
+- **User context.** `withUserContext(actor, fn)` sets only the actor under `rebook_app` and passes a `UserTx` handle; the only repository accepting `UserTx` is "list my memberships".
+- **Slug resolution.** `rebook.resolve_tenant_slug(slug)` is a `SECURITY DEFINER` function with `search_path = ''` that returns only the tenant id (or null), executable by `rebook_app` only. Public pages in Phase 5 reuse it.
+- **Authorised tenant context.** `resolveTenantForUser(slug, user)` resolves the slug, checks an active membership via `UserTx`, and returns a branded `AuthorisedTenantContext`. `withTenant` accepts user actors only through that type; registration and invite acceptance have their own constructors.
+- **Supabase Auth** via `@supabase/ssr`: email and password, and magic link. Sessions are refreshed in Next.js's request interceptor, and server code verifies the user with Supabase on every request rather than trusting the cookie's session payload.
+- **Sign-up, then onboarding.** The auth user lives in Supabase Auth, so this is two steps, not one transaction. Onboarding creates the tenant (name, slug, business type, IANA time zone), default location and owner membership in one `withTenant` transaction with an app-generated tenant id. Slug collisions retry with a suffix on unique violation. A signed-in user with no membership lands on onboarding.
+- **Business type** on `tenants`: `event_planner`, `midwife`, `other_timed`. Terminology (client or patient; booking, enquiry or appointment) and `isHealthBusiness` are derived in domain code, not stored separately.
+- **Roles and permissions.** `owner` and `staff`; `can(role, permission)` checked in every application command. Owner-only: invite member, revoke member, toggle flag, update business settings.
+- **Invitations** in our own `tenant_invitations` table (email, role, token hash, expiry, accepted and revoked timestamps), not Supabase admin invites, which need the service-role key. The link carries slug and token; accepting requires a signed-in user whose verified email matches, and creates the membership idempotently.
+- **Feature flags** read server-side with `requireFlag(tenant, flag)`; changes audited in the same transaction.
+- **Back-office shell** at `/app/[slug]`: navigation, tenant switcher listing only the user's tenants, empty dashboard in the business type's words, mobile layout at 375 px.
+- The service-role key is never used in application code.
 
 **Acceptance criteria.**
 
-- [ ] A new owner registers, picks "Midwife" or "Event planner", and lands on a dashboard using that business type's words.
-- [ ] Two registrations with the same business name get different slugs; slug collisions are handled without errors.
-- [ ] A user with membership in tenant A requesting tenant B's slug gets 404, not 403 (no existence leak).
-- [ ] A `staff` user calling an owner-only command gets a typed permission error, tested for every owner-only command.
-- [ ] An invited team member can sign in and sees only the inviting tenant.
+- [ ] Phase 1 follow-ups: a `customer` actor whose id matches a user sees no memberships; a membership for a non-existent user fails the foreign key; modifying an existing migration fails CI; wrong-case and alias time zones follow the documented rule and are never stored as typed.
+- [ ] A new owner signs up, completes onboarding as "Midwife" or "Event planner", and lands on a dashboard using that business type's words.
+- [ ] A user who abandons onboarding returns to it at next sign-in, and no partial tenant, location or membership rows exist.
+- [ ] Two businesses with the same name get different slugs without errors.
+- [ ] A member of tenant A requesting tenant B's slug gets the same 404 as a slug that does not exist.
+- [ ] `withTenant` cannot be called for a user actor without an `AuthorisedTenantContext` (`@ts-expect-error` test).
+- [ ] A `staff` user calling any owner-only command gets a typed permission error, tested for every owner-only command.
+- [ ] An invite is accepted only by a signed-in user with the matching verified email; expired, revoked or already-used invites return 404; accepting twice creates one membership.
 - [ ] Toggling a feature flag writes an `audit_logs` row with actor and before/after values.
-- [ ] Signed-out access to any back-office route redirects to sign-in; API routes return 401.
-- [ ] Playwright: register, sign out, sign in, invite, accept, at desktop and 375 px.
+- [ ] Signed-out access to back-office routes redirects to sign-in; API routes return 401; a forged or expired session cookie is rejected.
+- [ ] CI fails if the service-role key is referenced anywhere under `src/`.
+- [ ] Playwright, desktop and 375 px: sign up, onboard, sign out, sign in, invite, accept, switch tenant.
 
 ## Phase 3 — Services, team, schedules and custom fields
 

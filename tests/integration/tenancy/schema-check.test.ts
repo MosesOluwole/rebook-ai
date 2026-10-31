@@ -91,8 +91,43 @@ describe('schema check', () => {
     const problems = findings.filter((f) => f.table === 'zz_single_fk').map((f) => f.problem);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(
-      /foreign key zz_single_fk_location_id_fkey to locations \(location_id\) must be \(tenant_id, …\)/,
+      /foreign key zz_single_fk_location_id_fkey to rebook\.locations \(location_id\) must be tenant_id → tenants\(id\), \(tenant_id, …\)/,
     );
+  });
+
+  it('accepts a single-column foreign key to auth.users(id), the one non-tenant parent', async () => {
+    const findings = await findingsWith(async (tx) => {
+      await tx`
+        create table rebook.zz_user_fk (
+          id uuid primary key default rebook.uuid_generate_v7(),
+          tenant_id uuid not null references rebook.tenants (id),
+          user_id uuid not null references auth.users (id) on delete cascade,
+          unique (tenant_id, id)
+        )
+      `;
+      await tx`alter table rebook.zz_user_fk enable row level security`;
+      await tx`alter table rebook.zz_user_fk force row level security`;
+      await tx`create policy p on rebook.zz_user_fk for all to rebook_app using (true)`;
+    });
+    expect(findings.filter((f) => f.table === 'zz_user_fk')).toEqual([]);
+  });
+
+  it('rejects a single-column foreign key to any other table outside rebook', async () => {
+    const findings = await findingsWith(async (tx) => {
+      await tx`
+        create table rebook.zz_other_schema_fk (
+          id uuid primary key default rebook.uuid_generate_v7(),
+          tenant_id uuid not null references rebook.tenants (id),
+          identity_id uuid references auth.identities (id)
+        )
+      `;
+      await tx`alter table rebook.zz_other_schema_fk enable row level security`;
+      await tx`alter table rebook.zz_other_schema_fk force row level security`;
+      await tx`create policy p on rebook.zz_other_schema_fk for all to rebook_app using (true)`;
+    });
+    const problems = findings.filter((f) => f.table === 'zz_other_schema_fk').map((f) => f.problem);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/to auth\.identities \(identity_id\)/);
   });
 
   it('accepts the composite foreign key pattern', async () => {

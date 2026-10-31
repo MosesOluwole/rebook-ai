@@ -9,8 +9,9 @@ import { expectSqlState, PERMISSION_DENIED } from '../../helpers/sql-state';
 import { contextFor, seedTenantPair, type TenantPair } from '../../helpers/tenant-fixtures';
 
 /**
- * Role and privilege rules (docs/phases.md Phase 1): the login role holds nothing, the Data API
- * roles hold nothing, runtime roles cannot bypass RLS, and audit_logs is append-only.
+ * Role and privilege rules (docs/phases.md Phase 1, extended in Phase 2): the login role holds
+ * nothing, the Data API roles hold nothing, runtime roles cannot bypass RLS, audit_logs is
+ * append-only, and the slug resolver is callable by rebook_app alone.
  */
 
 const catalogueOwner = await connectOwnerDb({ max: 1 });
@@ -123,6 +124,80 @@ describe('rebook_authenticator outside withTenant', () => {
   it('cannot call the UUIDv7 function either', async () => {
     await expectSqlState(app.client.sql`select rebook.uuid_generate_v7()`, PERMISSION_DENIED);
   });
+
+  it('cannot call the slug resolver outside a user context', async () => {
+    await expectSqlState(
+      app.client.sql`select rebook.resolve_tenant_slug(${pair.a.slug})`,
+      PERMISSION_DENIED,
+    );
+  });
+});
+
+describe('rebook.rate_limit_hit (Phase 2 follow-ups)', () => {
+  it('is executable by rebook_app only and unreachable for the login role outside a context', async () => {
+    const [grants] = await owner.sql<Record<string, boolean>[]>`
+      select
+        has_function_privilege('rebook_app', 'rebook.rate_limit_hit(text, integer, integer, timestamptz)', 'EXECUTE') as app,
+        has_function_privilege('rebook_worker', 'rebook.rate_limit_hit(text, integer, integer, timestamptz)', 'EXECUTE') as worker,
+        has_function_privilege('rebook_authenticator', 'rebook.rate_limit_hit(text, integer, integer, timestamptz)', 'EXECUTE') as authenticator,
+        has_function_privilege('anon', 'rebook.rate_limit_hit(text, integer, integer, timestamptz)', 'EXECUTE') as anon,
+        has_function_privilege('authenticated', 'rebook.rate_limit_hit(text, integer, integer, timestamptz)', 'EXECUTE') as authenticated
+    `;
+    expect(grants).toEqual({
+      app: true,
+      worker: false,
+      authenticator: false,
+      anon: false,
+      authenticated: false,
+    });
+    await expectSqlState(
+      app.client.sql`select rebook.rate_limit_hit(${'a'.repeat(64)}, 60, 1, now())`,
+      PERMISSION_DENIED,
+    );
+  });
+});
+
+describe('rebook.resolve_tenant_slug (Phase 2)', () => {
+  it('is SECURITY DEFINER with an empty search_path, executable by rebook_app only', async () => {
+    const [fn] = await owner.sql<{ secdef: boolean; config: string[] | null }[]>`
+      select p.prosecdef as secdef, p.proconfig as config
+      from pg_catalog.pg_proc p join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'rebook' and p.proname = 'resolve_tenant_slug'
+    `;
+    expect(fn?.secdef).toBe(true);
+    expect(fn?.config).toEqual(['search_path=""']);
+
+    const [grants] = await owner.sql<Record<string, boolean>[]>`
+      select
+        has_function_privilege('rebook_app', 'rebook.resolve_tenant_slug(text)', 'EXECUTE') as app,
+        has_function_privilege('rebook_worker', 'rebook.resolve_tenant_slug(text)', 'EXECUTE') as worker,
+        has_function_privilege('rebook_authenticator', 'rebook.resolve_tenant_slug(text)', 'EXECUTE') as authenticator,
+        has_function_privilege('rebook_platform', 'rebook.resolve_tenant_slug(text)', 'EXECUTE') as platform,
+        has_function_privilege('anon', 'rebook.resolve_tenant_slug(text)', 'EXECUTE') as anon,
+        has_function_privilege('authenticated', 'rebook.resolve_tenant_slug(text)', 'EXECUTE') as authenticated,
+        has_function_privilege('service_role', 'rebook.resolve_tenant_slug(text)', 'EXECUTE') as data_api_admin
+    `;
+    expect(grants).toEqual({
+      app: true,
+      worker: false,
+      authenticator: false,
+      platform: false,
+      anon: false,
+      authenticated: false,
+      data_api_admin: false,
+    });
+  });
+
+  it('returns the id for a known slug and null otherwise, from a context with no tenant', async () => {
+    const [row] = await app.client.sql.begin(async (tx) => {
+      await tx`set local role rebook_app`;
+      return tx<{ known: string | null; unknown: string | null }[]>`
+        select rebook.resolve_tenant_slug(${pair.a.slug}) as known,
+               rebook.resolve_tenant_slug(${`${pair.a.slug}-nope`}) as unknown
+      `;
+    });
+    expect(row).toEqual({ known: pair.a.id, unknown: null });
+  });
 });
 
 describe('Supabase Data API roles (anon, authenticated)', () => {
@@ -160,7 +235,7 @@ describe('audit_logs is append-only for runtime roles', () => {
     const rows = await app.tenancy.withTenant(contextFor(pair.a.id), async (tx) => {
       await tx.db.execute(sql`
         insert into rebook.audit_logs (tenant_id, actor_kind, action, entity_type)
-        values (${pair.a.id}, 'user', 'probe.append', 'probe')
+        values (${pair.a.id}, 'system', 'probe.append', 'probe')
       `);
       return tx.db.execute<{ action: string }>(
         sql`select action from rebook.audit_logs where tenant_id = ${pair.a.id} order by created_at`,

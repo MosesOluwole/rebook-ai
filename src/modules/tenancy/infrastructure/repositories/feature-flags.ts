@@ -5,7 +5,7 @@ import { type TenantTx } from '../tenant-tx';
 
 /**
  * Raw flag storage. Not part of the module's public surface: toggles must go through the
- * application function `setFeatureFlag`, which audits the change in the same transaction.
+ * application function `toggleFeatureFlag`, which audits the change in the same transaction.
  */
 export const featureFlagsRepository = {
   /** The stored value, or null when the tenant has never set the flag. */

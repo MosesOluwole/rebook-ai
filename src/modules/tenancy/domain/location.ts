@@ -1,11 +1,11 @@
 import { z } from 'zod';
 
 import { ValidationError } from './errors';
-import { isIanaTimeZone, TIME_ZONE_MESSAGE } from './time-zone';
+import { timeZoneSchema } from './tenant';
 
 export const newLocationSchema = z.strictObject({
   name: z.string().trim().min(1).max(120),
-  timeZone: z.string().refine(isIanaTimeZone, TIME_ZONE_MESSAGE),
+  timeZone: timeZoneSchema,
 });
 
 export type NewLocation = z.infer<typeof newLocationSchema>;

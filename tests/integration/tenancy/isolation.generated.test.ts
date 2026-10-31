@@ -11,7 +11,12 @@ import {
   type RebookTable,
 } from '../../helpers/catalogue';
 import { connectAppDb, connectOwnerDb, type AppDb } from '../../helpers/db';
-import { expectSqlState, FOREIGN_KEY_VIOLATION, PERMISSION_DENIED } from '../../helpers/sql-state';
+import {
+  CHECK_VIOLATION,
+  expectSqlState,
+  FOREIGN_KEY_VIOLATION,
+  PERMISSION_DENIED,
+} from '../../helpers/sql-state';
 import {
   contextFor,
   seedTenantPair,
@@ -20,7 +25,7 @@ import {
 } from '../../helpers/tenant-fixtures';
 
 /**
- * Generated tenant-isolation suite (docs/phases.md Phase 1). The catalogue decides what is
+ * Generated tenant-isolation suite (docs/phases.md Phase 1, extended in Phase 2). The catalogue decides what is
  * tested: every table in `rebook` with a tenant_id column gets the same block, and every
  * composite foreign key gets a cross-tenant insert attempt. Rows are seeded as the owner
  * (tests/helpers/tenant-fixtures.ts); every assertion runs as rebook_authenticator through
@@ -31,6 +36,7 @@ import {
 const touch: Readonly<Record<string, ReturnType<typeof sql>>> = {
   locations: sql`name = 'touched'`,
   tenant_memberships: sql`role = 'staff'`,
+  tenant_invitations: sql`role = 'staff'`,
   audit_logs: sql`action = 'touched.row'`,
   tenant_feature_flags: sql`enabled = false`,
   idempotency_keys: sql`request_hash = 'touched'`,
@@ -41,10 +47,18 @@ const sampleRow: Readonly<
   Record<string, (tenantId: string, seed: SeededTenant) => Record<string, unknown>>
 > = {
   locations: (tenantId) => ({ tenant_id: tenantId, name: 'Probe', time_zone: 'Europe/London' }),
-  tenant_memberships: (tenantId) => ({
+  // user_id must be a real auth user (foreign key); the spare user has no membership anywhere.
+  tenant_memberships: (tenantId, seed) => ({
     tenant_id: tenantId,
-    user_id: '019a2c3e-6c6d-7a2b-8f3e-1a2b3c4d5e6f',
+    user_id: seed.spareUserId,
     role: 'staff',
+  }),
+  tenant_invitations: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    email: `probe-${seed.slug}@example.invalid`,
+    role: 'staff',
+    token_hash: 'a'.repeat(64),
+    expires_at: new Date(Date.now() + 60_000).toISOString(),
   }),
   audit_logs: (tenantId) => ({
     tenant_id: tenantId,
@@ -69,6 +83,7 @@ function seededIdIn(table: string, seed: SeededTenant): string {
     tenants: seed.id,
     locations: seed.locationId,
     tenant_memberships: seed.membershipId,
+    tenant_invitations: seed.invitationId,
     audit_logs: seed.auditLogId,
     idempotency_keys: seed.idempotencyKeyId,
   };
@@ -116,12 +131,14 @@ afterAll(async () => {
 });
 
 describe('catalogue coverage', () => {
-  it('found the Phase 1 tables', () => {
+  it('found the Phase 1 and Phase 2 tables', () => {
     expect(allTables.map((table) => table.table)).toEqual([
       'audit_logs',
       'idempotency_keys',
       'locations',
+      'rate_limits',
       'tenant_feature_flags',
+      'tenant_invitations',
       'tenant_memberships',
       'tenants',
     ]);
@@ -258,19 +275,36 @@ describe('rebook.tenants (the tenant row itself)', () => {
     await expectSqlState(
       app.tenancy.withTenant(contextFor(pair.a.id), (tx) =>
         tx.db.execute(
-          sql`insert into rebook.tenants (id, name, slug, time_zone) values (${pair.b.id}, 'Imposter', ${`imposter-${pair.a.slug}`}, 'Europe/London')`,
+          sql`insert into rebook.tenants (id, name, slug, business_type, time_zone) values (${pair.b.id}, 'Imposter', ${`imposter-${pair.a.slug}`}, 'other_timed', 'Europe/London')`,
         ),
       ),
       PERMISSION_DENIED,
     );
   });
 
-  it('denies update and delete to the runtime role', async () => {
+  it('updates zero rows of tenant B and its own row only (Phase 2: owners edit settings)', async () => {
+    const other = await app.tenancy.withTenant(contextFor(pair.a.id), (tx) =>
+      tx.db.execute(
+        sql`update rebook.tenants set name = 'touched' where id = ${pair.b.id} returning 1`,
+      ),
+    );
+    expect(other).toHaveLength(0);
+    const own = await app.tenancy.withTenant(contextFor(pair.a.id), (tx) =>
+      tx.db.execute<{ name: string }>(
+        sql`update rebook.tenants set name = ${pair.a.name} where id = ${pair.a.id} returning name`,
+      ),
+    );
+    expect(own).toEqual([{ name: pair.a.name }]);
+  });
+
+  it('refuses to change the slug (links depend on it) and denies delete to the runtime role', async () => {
     await expectSqlState(
       app.tenancy.withTenant(contextFor(pair.a.id), (tx) =>
-        tx.db.execute(sql`update rebook.tenants set name = 'x' where id = ${pair.a.id}`),
+        tx.db.execute(
+          sql`update rebook.tenants set slug = ${`${pair.a.slug}-moved`} where id = ${pair.a.id}`,
+        ),
       ),
-      PERMISSION_DENIED,
+      CHECK_VIOLATION,
     );
     await expectSqlState(
       app.tenancy.withTenant(contextFor(pair.a.id), (tx) =>

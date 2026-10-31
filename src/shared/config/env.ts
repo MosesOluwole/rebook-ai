@@ -28,6 +28,23 @@ const schema = z.object({
    * optional here and tooling asks for it through getOwnerDatabaseUrl().
    */
   DATABASE_URL: postgresUrl.optional(),
+  /**
+   * Supabase Auth, reached only from the server (docs/adr/ADR-004-auth-sessions.md): the API
+   * gateway URL and the publishable (anon) key. The browser never receives either. The admin
+   * key and the JWT secret are never configured for this app (`pnpm check:secrets`).
+   */
+  SUPABASE_URL: z.url({ protocol: /^https?$/ }),
+  SUPABASE_PUBLISHABLE_KEY: z.string().trim().min(20),
+  /**
+   * The request header that carries the client IP, set by the trusted reverse proxy in front of
+   * the app (docs/adr/ADR-004-auth-sessions.md §9). Rate limits key on it. Required: without a
+   * trusted header the app cannot tell clients apart, so it refuses to start rather than guess.
+   */
+  CLIENT_IP_HEADER: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .regex(/^[a-z0-9-]{1,64}$/, 'a header name such as x-forwarded-for'),
   NEXT_PUBLIC_APP_URL: z.url({ protocol: /^https?$/ }).default('http://localhost:3000'),
 });
 
@@ -43,6 +60,12 @@ const HINTS: Readonly<Record<EnvVariable, string>> = {
   DATABASE_URL:
     'Postgres connection string for the owner role used by migrations and tooling, e.g. ' +
     'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
+  SUPABASE_URL:
+    'URL of the Supabase API gateway, e.g. http://127.0.0.1:54321 (API_URL in `pnpm db:status`)',
+  SUPABASE_PUBLISHABLE_KEY:
+    'the publishable or anon key of the Supabase project (PUBLISHABLE_KEY or ANON_KEY in `pnpm db:status`)',
+  CLIENT_IP_HEADER:
+    'the request header the trusted proxy sets to the client IP, e.g. x-forwarded-for locally or x-real-ip on the platform',
   NEXT_PUBLIC_APP_URL: 'public origin of the web app, e.g. http://localhost:3000',
 };
 

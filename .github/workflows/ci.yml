@@ -3,22 +3,29 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
-  # Supersede stale PR runs, but let every push to main finish so its history stays complete.
+  # Supersede stale PR runs, but let every push to master finish so its history stays complete.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   NEXT_TELEMETRY_DISABLED: '1'
-  # Local-stack connection strings. CI runs the same Supabase Postgres image developers use.
+  # Local-stack connection strings. CI runs the same Supabase images developers use.
   # DATABASE_URL is the owner (migrations, tooling, fixtures); APP_DATABASE_URL is the app role.
   DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
   APP_DATABASE_URL: postgresql://rebook_authenticator:rebook_local_dev@127.0.0.1:54322/postgres
+  # Supabase Auth of the local stack. The publishable (anon) key is the CLI's fixed demo key; the
+  # e2e job re-reads it from `supabase status` in case the CLI ever changes it.
+  SUPABASE_URL: http://127.0.0.1:54321
+  # Rate limits key on the client IP from this header; Playwright sets it per run (and per test
+  # where a test exercises the limit).
+  CLIENT_IP_HEADER: x-forwarded-for
+  SUPABASE_PUBLISHABLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
 
 jobs:
   static:
@@ -27,6 +34,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the migrations check compares this branch with its base.
+          fetch-depth: 0
       - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -37,6 +47,15 @@ jobs:
       - run: pnpm lint
       - run: pnpm lint:deps
       - run: pnpm format:check
+      - name: No admin key, secret key or JWT secret under src/
+        run: pnpm check:secrets
+      - name: Applied migrations are unchanged
+        # Pull requests compare with the target branch; pushes to master compare with the commit
+        # before the push.
+        # A zero SHA (branch creation, force push) makes the script skip with a notice.
+        run: pnpm check:migrations --base "$MIGRATIONS_BASE_REF"
+        env:
+          MIGRATIONS_BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || github.event.before }}
       - run: pnpm test
 
   integration:
@@ -53,7 +72,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Start a fresh Postgres and apply all migrations
         # `supabase db start` boots only the database container (same image and version as
-        # `supabase start`) and applies supabase/migrations to the empty database.
+        # `supabase start`) and applies supabase/migrations to the empty database. The image
+        # itself creates auth.users, which tenant_memberships references.
         run: pnpm exec supabase db start
       - name: Re-apply migrations (must be a no-op on an up-to-date database)
         run: pnpm db:migrate
@@ -68,7 +88,7 @@ jobs:
   e2e:
     name: Build and end-to-end tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@d9184bf108216479bc5a137cc391f4d7b14c870b # v6.1.0
@@ -78,6 +98,17 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
+      - name: Start the local Supabase stack (database, API gateway, Auth, mail catcher)
+        # Sign-up, sign-in and invitation journeys need Supabase Auth and Mailpit; everything the
+        # app does not use stays off to keep the job fast.
+        run: pnpm exec supabase start -x realtime,storage-api,imgproxy,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
+      - name: Set the local password of rebook_authenticator
+        run: pnpm db:roles
+      - name: Use the publishable key the local stack reports
+        run: |
+          key="$(pnpm exec supabase status -o env | sed -n 's/^PUBLISHABLE_KEY="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p')"
+          if [ -z "$key" ]; then echo "::error::supabase status did not report PUBLISHABLE_KEY"; exit 1; fi
+          echo "SUPABASE_PUBLISHABLE_KEY=$key" >> "$GITHUB_ENV"
       - run: pnpm build
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

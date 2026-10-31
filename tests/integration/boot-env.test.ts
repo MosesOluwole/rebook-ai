@@ -59,7 +59,14 @@ function bootNextDev(
 ): Promise<BootResult> {
   // The child boots the way `pnpm dev` does (Vitest sets NODE_ENV=test). The variables under test
   // start from a clean slate so the outcome does not depend on the shell that runs the tests.
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'development' };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    NODE_ENV: 'development',
+    // Valid in every case here: the cases are about the database and public URL variables.
+    SUPABASE_URL: 'http://127.0.0.1:54321',
+    SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_synthetic_value_for_tests',
+    CLIENT_IP_HEADER: 'x-forwarded-for',
+  };
   delete env.APP_DATABASE_URL;
   delete env.NEXT_PUBLIC_APP_URL;
   for (const [name, value] of Object.entries(variables)) {

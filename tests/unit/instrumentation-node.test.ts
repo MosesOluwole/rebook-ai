@@ -10,6 +10,13 @@ import type * as InstrumentationNode from '@/instrumentation.node';
  */
 
 const VALID_DATABASE_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
+
+/** The Supabase variables are valid in every case here; the cases are about the others. */
+function stubSupabaseEnv(): void {
+  vi.stubEnv('SUPABASE_URL', 'http://127.0.0.1:54321');
+  vi.stubEnv('SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_synthetic_value_for_tests');
+  vi.stubEnv('CLIENT_IP_HEADER', 'x-forwarded-for');
+}
 const EXIT_SENTINEL = 'process.exit was called';
 
 async function loadFresh(): Promise<typeof InstrumentationNode> {
@@ -36,6 +43,7 @@ describe('validateEnvironmentOrExit', () => {
   });
 
   it('prints every problem and exits with code 1 when the environment is invalid', async () => {
+    stubSupabaseEnv();
     vi.stubEnv('APP_DATABASE_URL', '');
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'ftp://not-a-web-origin');
     const { validateEnvironmentOrExit } = await loadFresh();
@@ -55,6 +63,7 @@ describe('validateEnvironmentOrExit', () => {
   });
 
   it('returns without printing or exiting when the environment is valid', async () => {
+    stubSupabaseEnv();
     vi.stubEnv('APP_DATABASE_URL', VALID_DATABASE_URL);
     vi.stubEnv('NEXT_PUBLIC_APP_URL', 'http://localhost:3000');
     vi.stubEnv('NODE_ENV', 'test');

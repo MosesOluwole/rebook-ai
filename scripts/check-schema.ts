@@ -1,7 +1,8 @@
 /**
  * CI schema check: fails when a table in the `rebook` schema breaks a tenant-isolation rule
  * (missing tenant_id, RLS not enabled or not forced, no policy, a foreign key that is not
- * tenant_id → tenants(id) or composite on tenant_id, or any privilege for a Supabase Data API role). Runs as the owner against the migrated database.
+ * tenant_id → tenants(id), composite on tenant_id, or a user column → auth.users(id); or any
+ * privilege for a Supabase Data API role). Runs as the owner against the migrated database.
  *
  *   pnpm db:check-schema
  */

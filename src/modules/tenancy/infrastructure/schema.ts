@@ -13,6 +13,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 
+import { BUSINESS_TYPES } from '../domain/business-type';
+import { MEMBERSHIP_ROLES } from '../domain/permissions';
+
 /**
  * Tenancy tables (docs/architecture.md §5, docs/adr/ADR-002-schema-roles-context.md).
  *
@@ -33,6 +36,8 @@ export const tenants = rebook
       id: uuid().primaryKey().default(uuidV7),
       name: text().notNull(),
       slug: text().notNull().unique(),
+      /** Terminology and the health flag derive from this in domain code; nothing else is stored. */
+      businessType: text({ enum: BUSINESS_TYPES }).notNull(),
       timeZone: text().notNull(),
       createdAt: timestamptz().notNull().defaultNow(),
       updatedAt: timestamptz().notNull().defaultNow(),
@@ -40,6 +45,10 @@ export const tenants = rebook
     (table) => [
       check('tenants_name_length', sql`length(btrim(${table.name})) between 1 and 120`),
       check('tenants_slug_format', sql`${table.slug} ~ '^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$'`),
+      check(
+        'tenants_business_type_valid',
+        sql`${table.businessType} in ('event_planner', 'midwife', 'other_timed')`,
+      ),
       check('tenants_time_zone_valid', sql`rebook.is_time_zone(${table.timeZone})`),
     ],
   )
@@ -74,9 +83,12 @@ export const tenantMemberships = rebook
       tenantId: uuid()
         .notNull()
         .references(() => tenants.id),
-      /** Supabase Auth user id. Phase 2 decides whether to add a foreign key into auth.users. */
+      /**
+       * Supabase Auth user id. References auth.users(id) on delete cascade; the constraint is
+       * hand-written SQL (Phase 2 migration) because auth.users is not a Drizzle-managed table.
+       */
       userId: uuid().notNull(),
-      role: text().notNull(),
+      role: text({ enum: MEMBERSHIP_ROLES }).notNull(),
       createdAt: timestamptz().notNull().defaultNow(),
       revokedAt: timestamptz(),
     },
@@ -86,6 +98,45 @@ export const tenantMemberships = rebook
       // The select policy and listForCurrentActor look a user up across tenants.
       index('tenant_memberships_user_id_idx').on(table.userId),
       check('tenant_memberships_role_valid', sql`${table.role} in ('owner', 'staff')`),
+    ],
+  )
+  .enableRLS();
+
+export const tenantInvitations = rebook
+  .table(
+    'tenant_invitations',
+    {
+      id: uuid().primaryKey().default(uuidV7),
+      tenantId: uuid()
+        .notNull()
+        .references(() => tenants.id),
+      /** Lower-cased at the boundary; compared with the signed-in user's verified email on acceptance. */
+      email: text().notNull(),
+      role: text({ enum: MEMBERSHIP_ROLES }).notNull(),
+      /** SHA-256 (hex) of the 256-bit token in the invite link. The token itself is never stored. */
+      tokenHash: text().notNull(),
+      /** auth.users(id), on delete set null (hand-written constraint). */
+      invitedBy: uuid(),
+      expiresAt: timestamptz().notNull(),
+      acceptedAt: timestamptz(),
+      /** auth.users(id), on delete set null (hand-written constraint). */
+      acceptedBy: uuid(),
+      revokedAt: timestamptz(),
+      createdAt: timestamptz().notNull().defaultNow(),
+    },
+    (table) => [
+      unique('tenant_invitations_tenant_id_id_unique').on(table.tenantId, table.id),
+      unique('tenant_invitations_tenant_id_token_hash_unique').on(table.tenantId, table.tokenHash),
+      // One open invitation per address per tenant: the partial unique index
+      // tenant_invitations_open_email_unique on (tenant_id, lower(email)) where accepted_at and
+      // revoked_at are null is kept hand-written beside the policies (migration 174913). Do not
+      // add it here as well, or the next `db:generate` emits a duplicate.
+      check(
+        'tenant_invitations_email_format',
+        sql`${table.email} = lower(btrim(${table.email})) and ${table.email} ~ '^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$' and length(${table.email}) <= 320`,
+      ),
+      check('tenant_invitations_role_valid', sql`${table.role} in ('owner', 'staff')`),
+      check('tenant_invitations_token_hash_format', sql`${table.tokenHash} ~ '^[0-9a-f]{64}$'`),
     ],
   )
   .enableRLS();
