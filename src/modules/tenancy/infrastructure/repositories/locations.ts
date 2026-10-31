@@ -1,4 +1,4 @@
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 
 import { parseNewLocation, type NewLocation } from '../../domain/location';
 import { locations } from '../schema';
@@ -27,6 +27,14 @@ export const locationsRepository = {
       throw new Error('locations insert returned no row');
     }
     return row;
+  },
+
+  async findById(tx: TenantTx, id: string): Promise<Location | null> {
+    const [row] = await tx.db
+      .select()
+      .from(locations)
+      .where(and(eq(locations.tenantId, tx.ctx.tenantId), eq(locations.id, id)));
+    return row ?? null;
   },
 
   list(tx: TenantTx): Promise<Location[]> {

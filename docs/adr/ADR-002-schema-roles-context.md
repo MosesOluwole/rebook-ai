@@ -64,6 +64,19 @@ transactions; without `nullif` the `::uuid` cast would raise, with it the compar
 NULL and every policy fails closed to zero rows. `tests/integration/tenancy/with-tenant.test.ts`
 proves both the empty-string reading and the zero-row result on a single-connection pool.
 
+**Verified behind Supabase's transaction pooler (31 Oct 2026, Moses, hosted project).**
+`rebook_authenticator.<project-ref>` authenticates through the transaction pooler (Supavisor
+routes on the `.<project-ref>` suffix and Postgres sees the bare role), `SET LOCAL ROLE` into the
+runtime roles works inside a pooled transaction, and the isolation, `withTenant` and user-context
+suites pass there. The one failure was the Phase 1 "brand-new connection" probe, which assumed a
+fresh backend and asserted that the raw setting is NULL; behind a pooler the backend has usually
+served an earlier client, so it reads `''`. That is the case `nullif` exists for, and the policies
+were never wrong. In Phase 3 the probe became "a transaction with no context installed": it
+asserts `nullif(current_setting('app.tenant_id', true), '') is null` and zero rows in every
+tenant-scoped table, on one pooled connection both before and after a tenant transaction, so the
+same test holds locally and behind the pooler. `pnpm db:roles` accepts either username form and
+compares only the role part (`scripts/lib/authenticator-role.ts`).
+
 ### 4. Tables and conventions
 
 Core tables: `tenants`, `tenant_memberships`, `locations`, `audit_logs`, `tenant_feature_flags`,

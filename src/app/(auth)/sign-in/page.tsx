@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 
+import { RouteForm, SubmitButton, TextInput } from '../../_components/forms';
 import { safeNextPath } from '../../_lib/safe-next';
 import { currentUser } from '../../_lib/session';
 
@@ -8,12 +9,16 @@ export const dynamic = 'force-dynamic';
 
 interface SearchParams {
   readonly next?: string | string[];
-  readonly error?: string | string[];
-  readonly sent?: string | string[];
+  readonly link?: string | string[];
 }
 
 const first = (value: string | string[] | undefined): string | undefined =>
   Array.isArray(value) ? value[0] : value;
+
+/** The only notices the URL may ask for, as codes; the sentences live here. */
+const LINK_NOTICES: Readonly<Record<string, string>> = {
+  invalid: 'This link is invalid or has expired. Request a new one.',
+};
 
 export default async function SignInPage({
   searchParams,
@@ -25,57 +30,45 @@ export default async function SignInPage({
   if ((await currentUser()) !== null) {
     redirect(next);
   }
-  const error = first(params.error);
-  const sent = first(params.sent) === '1';
+  const linkNotice = LINK_NOTICES[first(params.link) ?? ''];
 
   return (
     <main>
       <h1>Sign in</h1>
-      {error !== undefined && (
+      {linkNotice !== undefined && (
         <p className="notice error" role="alert">
-          {error}
-        </p>
-      )}
-      {sent && (
-        <p className="notice" role="status">
-          Check your email for a sign-in link. It works once and expires in an hour.
+          {linkNotice}
         </p>
       )}
 
       <section className="card" aria-labelledby="password-heading">
         <h2 id="password-heading">With your password</h2>
-        <form className="stack" action="/auth/password" method="post">
+        <RouteForm endpoint="/auth/password" omit={['password']}>
           <input type="hidden" name="next" value={next} />
-          <label>
-            Email
-            <input type="email" name="email" autoComplete="email" required />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              name="password"
-              autoComplete="current-password"
-              required
-              minLength={8}
-            />
-          </label>
-          <button type="submit">Sign in</button>
-        </form>
+          <TextInput type="email" name="email" label="Email" autoComplete="email" required />
+          <TextInput
+            type="password"
+            name="password"
+            label="Password"
+            autoComplete="current-password"
+            required
+            minLength={8}
+          />
+          <div>
+            <SubmitButton>Sign in</SubmitButton>
+          </div>
+        </RouteForm>
       </section>
 
       <section className="card" aria-labelledby="link-heading">
         <h2 id="link-heading">With a sign-in link</h2>
-        <form className="stack" action="/auth/magic-link" method="post">
+        <RouteForm endpoint="/auth/magic-link">
           <input type="hidden" name="next" value={next} />
-          <label>
-            Email
-            <input type="email" name="email" autoComplete="email" required />
-          </label>
-          <button type="submit" className="quiet">
-            Email me a sign-in link
-          </button>
-        </form>
+          <TextInput type="email" name="email" label="Email" autoComplete="email" required />
+          <div>
+            <SubmitButton className="quiet">Email me a sign-in link</SubmitButton>
+          </div>
+        </RouteForm>
       </section>
 
       <p>

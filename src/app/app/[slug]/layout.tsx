@@ -37,7 +37,10 @@ export default async function WorkspaceLayout({
         </div>
         <nav aria-label="Workspace">
           <Link href={base}>Dashboard</Link>
+          <Link href={`${base}/services`}>Services</Link>
           <Link href={`${base}/team`}>Team</Link>
+          <Link href={`${base}/custom-fields`}>Custom fields</Link>
+          <Link href={`${base}/time-off`}>Time off</Link>
           <Link href={`${base}/settings`}>Settings</Link>
           <form action={signOut}>
             <button type="submit" className="quiet">

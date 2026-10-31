@@ -21,7 +21,11 @@ import { createDbClient } from '@/shared/db/client';
 describe('tenancy handle brands', () => {
   // postgres.js connects lazily, so no connection is made for this unused client.
   const client = createDbClient('postgresql://nobody:nobody@127.0.0.1:1/unused', { max: 1 });
-  const tenancy = createTenancy(client.db, { now: () => new Date(0) });
+  const tenancy = createTenancy(
+    client.db,
+    { now: () => new Date(0) },
+    { ownerJoined: () => Promise.resolve() },
+  );
   const tenantId = '019a2c3e-6c6d-7a2b-8f3e-1a2b3c4d5e6f';
   const userId = '019a2c3e-6c6d-7a2b-8f3e-1a2b3c4d5e70';
 

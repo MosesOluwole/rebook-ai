@@ -1,5 +1,6 @@
 import { type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 
+import { onboardingHooks } from '@/modules/booking';
 import { createTenancy, type Tenancy } from '@/modules/tenancy';
 import { getEnv, getOwnerDatabaseUrl } from '@/shared/config/env';
 import { createDbClient, type DbClient } from '@/shared/db/client';
@@ -47,7 +48,8 @@ export async function connectAppDb(options: ConnectOptions = {}): Promise<AppDb>
   return {
     client,
     db: client.db,
-    tenancy: createTenancy(client.db, testClock),
+    // The production hooks: onboarding in tests creates the owner's team member as it does live.
+    tenancy: createTenancy(client.db, testClock, onboardingHooks),
     close: () => client.close(),
   };
 }

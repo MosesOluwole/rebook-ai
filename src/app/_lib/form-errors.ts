@@ -1,11 +1,14 @@
+import { HealthClientFieldError } from '@/modules/crm';
 import {
   AlreadyMemberError,
   AuthProviderError,
   BusinessTypeChangeError,
+  BusinessTypeLockedError,
   CannotRevokeSelfError,
   DuplicateInvitationError,
   EmailNotVerifiedError,
   FeatureDisabledError,
+  HealthCustomFieldsError,
   InvalidCredentialsError,
   InvalidTokenError,
   NotFoundError,
@@ -55,6 +58,9 @@ export function formMessage(error: unknown): string {
     isTypedError(error, SlugUnavailableError) ||
     isTypedError(error, FeatureDisabledError) ||
     isTypedError(error, BusinessTypeChangeError) ||
+    isTypedError(error, BusinessTypeLockedError) ||
+    isTypedError(error, HealthCustomFieldsError) ||
+    isTypedError(error, HealthClientFieldError) ||
     isTypedError(error, DuplicateInvitationError) ||
     isTypedError(error, AlreadyMemberError)
   ) {

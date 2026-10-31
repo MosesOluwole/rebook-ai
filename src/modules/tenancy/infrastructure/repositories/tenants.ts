@@ -32,6 +32,19 @@ export const tenantsRepository = {
     return rows[0] ?? null;
   },
 
+  /**
+   * The current tenant, row-locked until the transaction ends. `update` is taken by a business
+   * type change; `share` by commands whose validity depends on the business type (creating a
+   * service). The two conflict, so a service cannot appear between the "no services yet" check
+   * and the type change, nor be created under a type that is being changed (docs/phases.md
+   * Phase 3). Both need the app role's UPDATE privilege on tenants, which only rebook_app holds.
+   */
+  async lockCurrent(tx: TenantTx, mode: 'share' | 'update'): Promise<Tenant | null> {
+    const query = tx.db.select().from(tenants).where(eq(tenants.id, tx.ctx.tenantId));
+    const rows = await (mode === 'update' ? query.for('update') : query.for('share'));
+    return rows[0] ?? null;
+  },
+
   /** Name, business type and time zone of the current tenant. The slug never changes. */
   async updateSettings(tx: TenantTx, settings: TenantSettings): Promise<Tenant> {
     const [row] = await tx.db

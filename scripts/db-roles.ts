@@ -1,15 +1,15 @@
 /**
  * Sets the local password of `rebook_authenticator` to the one in APP_DATABASE_URL and proves
- * the login works. Migrations create the role without a password (no secrets in migrations); this
+ * the login works. The username may be the bare role or the pooler form
+ * `rebook_authenticator.<project-ref>`; only the role part is compared (scripts/lib/authenticator-role.ts). Migrations create the role without a password (no secrets in migrations); this
  * script is the local counterpart of the platform secret store. Idempotent; safe to re-run.
  *
  *   pnpm db:roles
  */
 import { getEnv, getOwnerDatabaseUrl } from '../src/shared/config/env';
 import { createDbClient } from '../src/shared/db/client';
+import { AUTHENTICATOR_ROLE as ROLE, parseAuthenticatorUsername } from './lib/authenticator-role';
 import { loadProjectEnv } from './lib/load-env';
-
-const ROLE = 'rebook_authenticator';
 
 function fail(message: string): never {
   process.stderr.write(`db:roles: ${message}\n`);
@@ -19,10 +19,10 @@ function fail(message: string): never {
 loadProjectEnv();
 
 const appUrl = new URL(getEnv().APP_DATABASE_URL);
-const appRole = decodeURIComponent(appUrl.username);
+const username = parseAuthenticatorUsername(decodeURIComponent(appUrl.username));
 const appPassword = decodeURIComponent(appUrl.password);
-if (appRole !== ROLE) {
-  fail(`APP_DATABASE_URL must connect as ${ROLE}, not '${appRole}'`);
+if (!username.ok) {
+  fail(username.reason);
 }
 if (appPassword === '') {
   fail('APP_DATABASE_URL has no password; add one after the role name');
@@ -56,6 +56,7 @@ const app = createDbClient(getEnv().APP_DATABASE_URL, {
   applicationName: 'rebook-ai-db-roles',
 });
 try {
+  // A pooler strips the project ref before it reaches Postgres: the session user is the bare role.
   const [who] = await app.sql<{ user: string }[]>`select current_user as user`;
   if (who?.user !== ROLE) {
     fail(`connected as '${who?.user ?? 'unknown'}' instead of ${ROLE}`);

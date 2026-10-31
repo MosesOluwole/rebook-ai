@@ -11,7 +11,7 @@ import {
 
 import { clientIp } from './client-ip';
 import { isTypedError } from './form-errors';
-import { tooManyRequests } from './http';
+import { tooManyRequests, wantsJson } from './http';
 import { getTenancy } from './tenancy';
 
 const key = Symbol.for('rebook-ai.rate-limiter');
@@ -38,7 +38,7 @@ export async function rateLimitOrNull(
     return null;
   } catch (error) {
     if (isTypedError(error, RateLimitedError)) {
-      return tooManyRequests(error.retryAfterSeconds, backTo);
+      return tooManyRequests(error.retryAfterSeconds, backTo, wantsJson(request));
     }
     throw error;
   }

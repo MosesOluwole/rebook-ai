@@ -18,14 +18,14 @@ import {
   PERMISSION_DENIED,
 } from '../../helpers/sql-state';
 import {
+  type ConfiguredTenant,
+  type ConfiguredTenantPair,
   contextFor,
-  seedTenantPair,
-  type SeededTenant,
-  type TenantPair,
+  seedConfiguredTenantPair,
 } from '../../helpers/tenant-fixtures';
 
 /**
- * Generated tenant-isolation suite (docs/phases.md Phase 1, extended in Phase 2). The catalogue decides what is
+ * Generated tenant-isolation suite (docs/phases.md Phase 1, extended in Phases 2 and 3). The catalogue decides what is
  * tested: every table in `rebook` with a tenant_id column gets the same block, and every
  * composite foreign key gets a cross-tenant insert attempt. Rows are seeded as the owner
  * (tests/helpers/tenant-fixtures.ts); every assertion runs as rebook_authenticator through
@@ -40,11 +40,21 @@ const touch: Readonly<Record<string, ReturnType<typeof sql>>> = {
   audit_logs: sql`action = 'touched.row'`,
   tenant_feature_flags: sql`enabled = false`,
   idempotency_keys: sql`request_hash = 'touched'`,
+  services: sql`name = 'touched'`,
+  team_members: sql`display_name = 'touched'`,
+  staff_services: sql`created_at = now()`,
+  working_hours: sql`end_time = '18:00'`,
+  working_hour_breaks: sql`end_time = '12:30'`,
+  availability_exceptions: sql`ends_at = ends_at + interval '1 hour'`,
+  team_member_service_areas: sql`postcode_district = 'E1'`,
+  daily_capacity_rules: sql`max_events_per_date = 1`,
+  custom_field_definitions: sql`label = 'touched'`,
+  custom_field_values: sql`value = '"Green"'::jsonb`,
 };
 
 /** A minimal valid row per table for the given tenant, used for cross-tenant insert attempts. */
 const sampleRow: Readonly<
-  Record<string, (tenantId: string, seed: SeededTenant) => Record<string, unknown>>
+  Record<string, (tenantId: string, seed: ConfiguredTenant) => Record<string, unknown>>
 > = {
   locations: (tenantId) => ({ tenant_id: tenantId, name: 'Probe', time_zone: 'Europe/London' }),
   // user_id must be a real auth user (foreign key); the spare user has no membership anywhere.
@@ -75,10 +85,76 @@ const sampleRow: Readonly<
     // Raw `sql` parameters are passed to the driver as-is, so dates travel as ISO strings.
     expires_at: new Date(Date.now() + 60_000).toISOString(),
   }),
+  // Phase 3. Each child row references the seeding tenant's own parents; the composite key
+  // probes below swap one parent for tenant B's and expect the foreign key to refuse it.
+  services: (tenantId) => ({
+    tenant_id: tenantId,
+    name: 'Probe',
+    booking_mode: 'timed',
+    duration_minutes: 30,
+    price: '10.00',
+    currency: 'GBP',
+    location_type: 'clinic',
+  }),
+  team_members: (tenantId) => ({ tenant_id: tenantId, display_name: 'Probe' }),
+  staff_services: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    team_member_id: seed.teamMemberId,
+    service_id: seed.serviceId,
+  }),
+  // Tuesday, so it never overlaps the seeded Monday range (working_hours_no_overlap).
+  working_hours: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    team_member_id: seed.teamMemberId,
+    location_id: seed.locationId,
+    weekday: 2,
+    start_time: '09:00',
+    end_time: '10:00',
+  }),
+  working_hour_breaks: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    working_hours_id: seed.workingHoursId,
+    start_time: '10:00',
+    end_time: '10:15',
+  }),
+  // Time off rather than a closure: the team member key is then present, so swapping it for
+  // tenant B's member reaches the foreign key instead of the kind/subject CHECK.
+  availability_exceptions: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    kind: 'time_off',
+    team_member_id: seed.teamMemberId,
+    location_id: seed.locationId,
+    starts_at: '2031-03-03T09:00:00Z',
+    ends_at: '2031-03-03T17:00:00Z',
+  }),
+  team_member_service_areas: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    team_member_id: seed.teamMemberId,
+    postcode_district: 'M1',
+  }),
+  daily_capacity_rules: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    team_member_id: seed.teamMemberId,
+    max_events_per_date: 3,
+  }),
+  custom_field_definitions: (tenantId) => ({
+    tenant_id: tenantId,
+    entity: 'service',
+    key: 'probe_key',
+    label: 'Probe',
+    field_type: 'number',
+  }),
+  custom_field_values: (tenantId, seed) => ({
+    tenant_id: tenantId,
+    definition_id: seed.customFieldDefinitionId,
+    entity: 'service',
+    service_id: seed.serviceId,
+    value: '"Green"',
+  }),
 };
 
 /** The seeded row id of a tenant in a given table, for composite foreign key probes. */
-function seededIdIn(table: string, seed: SeededTenant): string {
+function seededIdIn(table: string, seed: ConfiguredTenant): string {
   const ids: Record<string, string> = {
     tenants: seed.id,
     locations: seed.locationId,
@@ -86,6 +162,14 @@ function seededIdIn(table: string, seed: SeededTenant): string {
     tenant_invitations: seed.invitationId,
     audit_logs: seed.auditLogId,
     idempotency_keys: seed.idempotencyKeyId,
+    services: seed.serviceId,
+    team_members: seed.teamMemberId,
+    working_hours: seed.workingHoursId,
+    working_hour_breaks: seed.workingHourBreakId,
+    availability_exceptions: seed.exceptionId,
+    daily_capacity_rules: seed.capacityRuleId,
+    custom_field_definitions: seed.customFieldDefinitionId,
+    custom_field_values: seed.customFieldValueId,
   };
   const id = ids[table];
   if (id === undefined) {
@@ -116,12 +200,12 @@ const tenantTables = allTables.filter((table) => table.hasTenantId);
 
 let owner: DbClient;
 let app: AppDb;
-let pair: TenantPair;
+let pair: ConfiguredTenantPair;
 
 beforeAll(async () => {
   owner = await connectOwnerDb();
   app = await connectAppDb();
-  pair = await seedTenantPair(owner, 'iso');
+  pair = await seedConfiguredTenantPair(owner, 'iso');
 });
 
 afterAll(async () => {
@@ -131,17 +215,50 @@ afterAll(async () => {
 });
 
 describe('catalogue coverage', () => {
-  it('found the Phase 1 and Phase 2 tables', () => {
+  it('found the Phase 1, 2 and 3 tables', () => {
     expect(allTables.map((table) => table.table)).toEqual([
       'audit_logs',
+      'availability_exceptions',
+      'custom_field_definitions',
+      'custom_field_values',
+      'daily_capacity_rules',
       'idempotency_keys',
       'locations',
       'rate_limits',
+      'services',
+      'staff_services',
+      'team_member_service_areas',
+      'team_members',
       'tenant_feature_flags',
       'tenant_invitations',
       'tenant_memberships',
       'tenants',
+      'working_hour_breaks',
+      'working_hours',
     ]);
+  });
+
+  it('found a composite key for every Phase 3 child of a tenant-owned parent', () => {
+    expect(compositeForeignKeys.map((fk) => `${fk.table}.${fk.name}`).sort()).toEqual(
+      expect.arrayContaining([
+        'availability_exceptions.availability_exceptions_location_fk',
+        'availability_exceptions.availability_exceptions_team_member_fk',
+        'custom_field_values.custom_field_values_definition_fk',
+        'custom_field_values.custom_field_values_service_fk',
+        'daily_capacity_rules.daily_capacity_rules_team_member_fk',
+        'staff_services.staff_services_service_fk',
+        'staff_services.staff_services_team_member_fk',
+        'team_member_service_areas.team_member_service_areas_team_member_fk',
+        'team_members.team_members_membership_fk',
+        'working_hour_breaks.working_hour_breaks_working_hours_fk',
+        'working_hours.working_hours_location_fk',
+        'working_hours.working_hours_team_member_fk',
+      ]),
+    );
+    for (const fk of compositeForeignKeys) {
+      const index = fk.columns.indexOf('tenant_id');
+      expect(fk.refColumns[index], fk.name).toBe('tenant_id');
+    }
   });
 
   it('has a touch expression and a sample row for every tenant-owned table', () => {

@@ -15,7 +15,7 @@ vi.stubEnv('SUPABASE_URL', 'http://127.0.0.1:54321');
 vi.stubEnv('SUPABASE_PUBLISHABLE_KEY', 'sb_publishable_synthetic_value_for_tests');
 vi.stubEnv('APP_ORIGIN', APP_ORIGIN);
 
-const { allowedOrigins, backToForm, rejectCrossOrigin, seeOther, temporaryRedirect } =
+const { allowedOrigins, rejectCrossOrigin, routeAnswer, seeOther, temporaryRedirect } =
   await import('@/app/_lib/http');
 
 function request(headers: Record<string, string>, method = 'POST'): NextRequest {
@@ -105,15 +105,39 @@ describe('path-relative redirects', () => {
     expect(response.body).toBeNull();
   });
 
-  it('backToForm encodes every parameter and stays relative', () => {
-    const response = backToForm('/sign-up', {
-      error: 'Check the form: a & b.',
-      next: '/app/x?y=1',
+  it('routeAnswer: a form post gets a relative 303 or an HTML page, never a message in a URL', async () => {
+    const post = (accept?: string) =>
+      new NextRequest('http://localhost:3000/auth/password', {
+        method: 'POST',
+        headers: accept === undefined ? {} : { accept },
+      });
+    const redirect = routeAnswer(post(), { redirect: '/app/x?y=1' });
+    expect(redirect.status).toBe(303);
+    expect(redirect.headers.get('location')).toBe('/app/x?y=1');
+
+    const page = routeAnswer(post(), {
+      ok: false,
+      status: 400,
+      message: 'Check the form: a & b.',
+      backTo: '/sign-up',
     });
-    expect(response.status).toBe(303);
-    expect(response.headers.get('location')).toBe(
-      '/sign-up?error=Check+the+form%3A+a+%26+b.&next=%2Fapp%2Fx%3Fy%3D1',
-    );
+    expect(page.status).toBe(400);
+    expect(page.headers.get('location')).toBeNull();
+    expect(page.headers.get('content-type')).toContain('text/html');
+    expect(await page.text()).toContain('Check the form: a &#38; b.');
+
+    const json = routeAnswer(post('application/json'), {
+      ok: false,
+      status: 401,
+      message: 'Incorrect email or password',
+      backTo: '/sign-in',
+    });
+    expect(json.status).toBe(401);
+    expect(await json.json()).toEqual({ ok: false, message: 'Incorrect email or password' });
+
+    const jsonRedirect = routeAnswer(post('application/json'), { redirect: '//evil.example/x' });
+    expect(jsonRedirect.status).toBe(200);
+    expect(await jsonRedirect.json()).toEqual({ ok: true, redirect: '/x' });
   });
 
   it('never emits an absolute Location, whatever the request looked like', () => {

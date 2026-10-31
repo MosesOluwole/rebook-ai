@@ -182,9 +182,11 @@ test('sign-in rejects a wrong password without leaking which part was wrong and 
   await form.getByLabel('Email').fill(email);
   await form.getByLabel('Password').fill('definitely-not-the-password');
   await form.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page).toHaveURL(/\/sign-in\?error=/);
   await expect(page.locator('p[role="alert"]')).toHaveText('Incorrect email or password');
-  expect(new URL(page.url()).searchParams.get('next')).toBe('/app/somewhere/team');
+  // The message is form state: the URL keeps only `next`, and the address is still filled in.
+  expect(new URL(page.url()).search).toBe('?next=%2Fapp%2Fsomewhere%2Fteam');
+  await expect(form.getByLabel('Email')).toHaveValue(email);
+  await expect(form.getByLabel('Password')).toHaveValue('');
   await expectNoHorizontalScroll(page);
 
   // An unknown address gets the identical message.

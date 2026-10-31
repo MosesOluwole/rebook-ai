@@ -3,7 +3,7 @@ import { type NextRequest, type NextResponse } from 'next/server';
 import { type SignUpOutcome } from '@/modules/tenancy';
 
 import { formMessage } from '../../_lib/form-errors';
-import { backToForm, rejectCrossOrigin, seeOther } from '../../_lib/http';
+import { rejectCrossOrigin, routeAnswer } from '../../_lib/http';
 import { rateLimitOrNull } from '../../_lib/rate-limiter';
 import { safeNextPath } from '../../_lib/safe-next';
 import { getAuthSession } from '../../_lib/session';
@@ -28,9 +28,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const parsed = credentialsSchema.safeParse({ email, password: formField(form, 'password') });
   if (!parsed.success) {
-    return backToForm('/sign-up', {
-      error: 'Enter a valid email and a password of at least 8 characters.',
-      next,
+    return routeAnswer(request, {
+      ok: false,
+      status: 400,
+      message: 'Enter a valid email and a password of at least 8 characters.',
+      backTo: '/sign-up',
     });
   }
   const auth = await getAuthSession();
@@ -38,10 +40,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     outcome = await auth.signUpWithPassword(parsed.data);
   } catch (error) {
-    return backToForm('/sign-up', { error: formMessage(error), next });
+    return routeAnswer(request, {
+      ok: false,
+      status: 400,
+      message: formMessage(error),
+      backTo: '/sign-up',
+    });
   }
   if (outcome === 'confirmation_required') {
-    return backToForm('/sign-up', { 'check-email': '1' });
+    return routeAnswer(request, {
+      ok: true,
+      status: 200,
+      message: 'Check your email to confirm your address, then sign in.',
+      backTo: '/sign-in',
+    });
   }
-  return seeOther(next === '/app' ? '/onboarding' : next);
+  return routeAnswer(request, { redirect: next === '/app' ? '/onboarding' : next });
 }

@@ -45,7 +45,9 @@ interface ForeignKeyRow {
   readonly name: string;
   readonly ref_schema: string;
   readonly ref_table: string;
+  readonly ref_has_tenant_id: boolean;
   readonly columns: string[];
+  readonly ref_columns: string[];
 }
 
 const TABLE_PRIVILEGES = [
@@ -103,17 +105,31 @@ export async function checkSchema(sql: SqlHandle): Promise<SchemaFinding[]> {
     order by c.relname, g.grantee
   `;
 
-  // Every foreign key out of a tenant-owned table is either tenant_id → tenants(id), a composite
-  // key that starts with tenant_id, or a single user column → auth.users(id), so a row can never
-  // point into another tenant (docs/architecture.md §5, ADR-002 §7). Supabase Auth users are not
-  // tenant-owned, which is why the auth.users reference is the one single-column exception.
+  // Every foreign key out of a rebook table is one of three shapes, so a row can never point into
+  // another tenant (docs/architecture.md §5, ADR-002 §7, extended in Phase 3):
+  //   - tenant_id → rebook.tenants(id);
+  //   - a composite key into a tenant-owned rebook table that maps the child's tenant_id to the
+  //     parent's tenant_id: (tenant_id, parent_id) → parent (tenant_id, id). A key into a
+  //     tenant-owned parent without that pair (parent_id alone, or tenant_id matched against some
+  //     other parent column) fails;
+  //   - a single user column → auth.users(id): Supabase Auth users are not tenant-owned.
+  // A key into a rebook table that has no tenant_id (other than tenants) fails as well.
   const foreignKeys = await sql<ForeignKeyRow[]>`
     select c.relname as table, k.conname as name, rn.nspname as ref_schema, r.relname as ref_table,
+      exists (
+        select 1 from pg_catalog.pg_attribute a
+        where a.attrelid = r.oid and a.attname = 'tenant_id' and a.attnum > 0 and not a.attisdropped
+      ) as ref_has_tenant_id,
       array(
         select a.attname from unnest(k.conkey) with ordinality as u(attnum, ord)
         join pg_catalog.pg_attribute a on a.attrelid = k.conrelid and a.attnum = u.attnum
         order by u.ord
-      ) as columns
+      ) as columns,
+      array(
+        select a.attname from unnest(k.confkey) with ordinality as u(attnum, ord)
+        join pg_catalog.pg_attribute a on a.attrelid = k.confrelid and a.attnum = u.attnum
+        order by u.ord
+      ) as ref_columns
     from pg_catalog.pg_constraint k
     join pg_catalog.pg_class c on c.oid = k.conrelid
     join pg_catalog.pg_namespace n on n.oid = c.relnamespace
@@ -139,16 +155,28 @@ export async function checkSchema(sql: SqlHandle): Promise<SchemaFinding[]> {
   }
 
   for (const fk of foreignKeys) {
-    const [first] = fk.columns;
     const single = fk.columns.length === 1;
+    const inRebook = fk.ref_schema === 'rebook';
     const toTenants =
-      single && first === 'tenant_id' && fk.ref_schema === 'rebook' && fk.ref_table === 'tenants';
-    const toAuthUser = single && fk.ref_schema === 'auth' && fk.ref_table === 'users';
-    const composite = fk.columns.length > 1 && first === 'tenant_id';
-    if (!toTenants && !toAuthUser && !composite) {
+      single &&
+      fk.columns[0] === 'tenant_id' &&
+      inRebook &&
+      fk.ref_table === 'tenants' &&
+      fk.ref_columns[0] === 'id';
+    const toAuthUser =
+      single && fk.ref_schema === 'auth' && fk.ref_table === 'users' && fk.ref_columns[0] === 'id';
+    const pairsTenant = fk.columns.some(
+      (column, index) => column === 'tenant_id' && fk.ref_columns[index] === 'tenant_id',
+    );
+    const toTenantOwnedParent = !single && inRebook && fk.ref_has_tenant_id && pairsTenant;
+    if (!toTenants && !toAuthUser && !toTenantOwnedParent) {
+      const why =
+        inRebook && fk.ref_has_tenant_id
+          ? `; a key into tenant-owned rebook.${fk.ref_table} must map tenant_id to its tenant_id (references ${fk.ref_columns.join(', ')})`
+          : '';
       findings.push({
         table: fk.table,
-        problem: `foreign key ${fk.name} to ${fk.ref_schema}.${fk.ref_table} (${fk.columns.join(', ')}) must be tenant_id → tenants(id), (tenant_id, …) → parent (tenant_id, id), or a user column → auth.users(id)`,
+        problem: `foreign key ${fk.name} to ${fk.ref_schema}.${fk.ref_table} (${fk.columns.join(', ')}) must be tenant_id → tenants(id), (tenant_id, …) → parent (tenant_id, id), or a user column → auth.users(id)${why}`,
       });
     }
   }

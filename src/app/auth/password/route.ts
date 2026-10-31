@@ -1,7 +1,7 @@
 import { type NextRequest, type NextResponse } from 'next/server';
 
 import { formMessage } from '../../_lib/form-errors';
-import { backToForm, rejectCrossOrigin, seeOther } from '../../_lib/http';
+import { rejectCrossOrigin, routeAnswer } from '../../_lib/http';
 import { rateLimitOrNull } from '../../_lib/rate-limiter';
 import { safeNextPath } from '../../_lib/safe-next';
 import { getAuthSession } from '../../_lib/session';
@@ -26,16 +26,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const parsed = credentialsSchema.safeParse({ email, password: formField(form, 'password') });
   if (!parsed.success) {
-    return backToForm('/sign-in', {
-      error: 'Enter your email and a password of at least 8 characters.',
-      next,
+    return routeAnswer(request, {
+      ok: false,
+      status: 400,
+      message: 'Enter your email and a password of at least 8 characters.',
+      backTo: '/sign-in',
     });
   }
   const auth = await getAuthSession();
   try {
     await auth.signInWithPassword(parsed.data);
   } catch (error) {
-    return backToForm('/sign-in', { error: formMessage(error), next });
+    return routeAnswer(request, {
+      ok: false,
+      status: 401,
+      message: formMessage(error),
+      backTo: '/sign-in',
+    });
   }
-  return seeOther(next);
+  return routeAnswer(request, { redirect: next });
 }

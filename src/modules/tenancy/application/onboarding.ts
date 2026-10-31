@@ -10,20 +10,36 @@ import { locationsRepository } from '../infrastructure/repositories/locations';
 import { membershipsRepository } from '../infrastructure/repositories/memberships';
 import { tenantsRepository } from '../infrastructure/repositories/tenants';
 import { sqlStateOf, UNIQUE_VIOLATION, violatedConstraintOf } from '../infrastructure/sql-errors';
-import { type TenantRunner } from '../infrastructure/tenant-tx';
+import { type Membership } from '../infrastructure/repositories/memberships';
+import { type TenantRunner, type TenantTx } from '../infrastructure/tenant-tx';
+
+/**
+ * What the rest of the system does when a business is created. Tenancy cannot import booking
+ * (booking depends on tenancy), so the composition root supplies it: booking's
+ * `onboardingHooks` adds the owner as the first team member (docs/phases.md Phase 3 decisions).
+ * Runs inside the onboarding transaction, so a failure leaves nothing behind.
+ */
+export interface OnboardingHooks {
+  ownerJoined(
+    tx: TenantTx,
+    joined: { readonly tenant: Tenant; readonly membership: Membership },
+  ): Promise<void>;
+}
 
 export interface OnboardingDeps {
   readonly runner: Pick<TenantRunner, 'withTenant'>;
   readonly ids: IdGenerator;
   /** Random suffix for slug collisions; injected so tests can make collisions deterministic. */
   readonly slugSuffix: () => string;
+  readonly hooks: OnboardingHooks;
 }
 
 const SLUG_ATTEMPTS = 5;
 
 /**
  * Creates a business for a signed-in user who has none yet (docs/phases.md Phase 2): tenant,
- * default location and owner membership in ONE transaction, with an app-generated tenant id and
+ * default location, owner membership and (through `hooks.ownerJoined`) the owner's team member
+ * in ONE transaction, with an app-generated tenant id and
  * the registration grant. The input is the same shape as the settings an owner can edit later.
  * A slug collision aborts the transaction (unique violation), so the whole thing is retried with
  * a suffixed slug and a fresh id; nothing partial is ever committed.
@@ -70,6 +86,7 @@ export async function completeOnboarding(
             entityId: membership.id,
             after: { role: membership.role, via: 'registration' },
           });
+          await deps.hooks.ownerJoined(tx, { tenant, membership });
           return tenant;
         },
       );

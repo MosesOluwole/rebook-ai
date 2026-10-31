@@ -1,6 +1,6 @@
 # ADR-001: Stack and tooling for the MVP
 
-- **Status:** Proposed (Phase 0). Becomes Accepted when Moses commits Phase 0.
+- **Status:** Accepted (Phase 0 committed as 608e891).
 - **Date:** 2026-10-29
 - **Deciders:** Moses Oluwole (owner); drafted by Claude Code during Phase 0.
 - **Source design:** `docs/architecture.md` (System Design v1.0), especially §3 Architecture,

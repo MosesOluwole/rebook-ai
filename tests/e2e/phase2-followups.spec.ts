@@ -161,12 +161,13 @@ test('a duplicate open invitation is refused; an active member accepting a secon
   // Accepting it as an active member changes nothing: told so, role still staff, invite still open.
   await member.goto(secondLink ?? '');
   await member.getByRole('button', { name: 'Accept invitation' }).click();
-  await expect(member).toHaveURL(new RegExp(`/invite/${slug}/[A-Za-z0-9_-]{43}\\?member=1$`));
   await expect(member.getByRole('status')).toContainText(
     'You are already a member of this business',
   );
+  // Told as form state: the address is still the plain invite link.
+  await expect(member).toHaveURL(new RegExp(`/invite/${slug}/[A-Za-z0-9_-]{43}$`));
   await expectNoHorizontalScroll(member);
-  await member.getByRole('link', { name: 'Open it' }).click();
+  await member.getByRole('link', { name: 'Open the business' }).click();
   await expect(member).toHaveURL(new RegExp(`/app/${slug}$`));
   await expect(member.getByText('you are an staff')).toBeVisible();
 

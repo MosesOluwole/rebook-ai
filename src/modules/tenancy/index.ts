@@ -20,7 +20,7 @@ import {
   createInvitation,
 } from './application/invitations';
 import { listMyTenants, type MyTenant } from './application/my-tenants';
-import { completeOnboarding } from './application/onboarding';
+import { completeOnboarding, type OnboardingHooks } from './application/onboarding';
 import { type AuthGateway } from './application/ports';
 import { resolveTenantForUser } from './application/resolve-tenant';
 import { type Tenant } from './domain/tenant';
@@ -40,22 +40,26 @@ import { createUuidV7Generator } from './infrastructure/uuid-v7-generator';
 export { ACTOR_KINDS, type ActorKind } from './domain/actor';
 export {
   BUSINESS_TYPES,
+  businessTypeChangeRefusal,
   businessTypeSchema,
   canChangeBusinessType,
   isBusinessType,
   isHealthBusiness,
   terminologyFor,
   type BusinessType,
+  type BusinessTypeChangeRefusal,
   type Terminology,
 } from './domain/business-type';
 export {
   AlreadyMemberError,
   AuthProviderError,
   BusinessTypeChangeError,
+  BusinessTypeLockedError,
   CannotRevokeSelfError,
   DuplicateInvitationError,
   EmailNotVerifiedError,
   FeatureDisabledError,
+  HealthCustomFieldsError,
   InvalidCredentialsError,
   InvalidTokenError,
   NotFoundError,
@@ -127,6 +131,9 @@ export {
   type CreatedInvitation,
   type Invitation,
 } from './application/invitations';
+export { requireId } from './application/ids';
+export { listLocations } from './application/locations';
+export { type OnboardingHooks } from './application/onboarding';
 export { listMembers, revokeMember } from './application/members';
 export { type MyTenant } from './application/my-tenants';
 export { assertPermission } from './application/permissions-guard';
@@ -136,7 +143,11 @@ export {
   type EmailTokenType,
   type SignUpOutcome,
 } from './application/ports';
-export { getCurrentTenant, updateBusinessSettings } from './application/settings';
+export {
+  getCurrentTenant,
+  updateBusinessSettings,
+  type BusinessTypeGuard,
+} from './application/settings';
 
 // ---- Infrastructure -----------------------------------------------------------------------
 export {
@@ -155,6 +166,15 @@ export {
   type NewMembership,
 } from './infrastructure/repositories/memberships';
 export { tenantsRepository } from './infrastructure/repositories/tenants';
+// For other modules' application code that maps constraint violations to typed errors.
+export {
+  CHECK_VIOLATION,
+  EXCLUSION_VIOLATION,
+  FOREIGN_KEY_VIOLATION,
+  sqlStateOf,
+  UNIQUE_VIOLATION,
+  violatedConstraintOf,
+} from './infrastructure/sql-errors';
 // Table objects are exported so later modules can declare composite foreign keys
 // (`foreignKey({ columns: [t.tenantId, t.locationId], foreignColumns: [locations.tenantId, locations.id] })`).
 // Never query them directly: go through the repositories and application functions above.
@@ -204,8 +224,16 @@ export interface Tenancy {
   acceptInvitation(slug: string, token: string, actor: UserActor): Promise<Membership>;
 }
 
-/** Composition root: wires the runner, ids and tokens for a database connected as rebook_authenticator. */
-export function createTenancy(db: PostgresJsDatabase, clock: Clock): Tenancy {
+/**
+ * Composition root: wires the runner, ids and tokens for a database connected as
+ * rebook_authenticator. `hooks` come from the modules that depend on tenancy (booking's
+ * `onboardingHooks`); they are required so no caller can forget them.
+ */
+export function createTenancy(
+  db: PostgresJsDatabase,
+  clock: Clock,
+  hooks: OnboardingHooks,
+): Tenancy {
   const runner = createTenantRunner(db);
   const ids = createUuidV7Generator(clock);
   return {
@@ -217,7 +245,7 @@ export function createTenancy(db: PostgresJsDatabase, clock: Clock): Tenancy {
     resolveTenantForUser: (slug, actor) => resolveTenantForUser({ runner }, slug, actor),
     listMyTenants: (actor) => listMyTenants({ runner }, actor),
     completeOnboarding: (input, actor) =>
-      completeOnboarding({ runner, ids, slugSuffix: randomSlugSuffix }, input, actor),
+      completeOnboarding({ runner, ids, slugSuffix: randomSlugSuffix, hooks }, input, actor),
     createInvitation: (tx, input) =>
       createInvitation({ clock, tokens: invitationTokens }, tx, input),
     acceptInvitation: (slug, token, actor) =>

@@ -71,11 +71,17 @@ src/shared/config/env.ts      The only place that reads app configuration from p
                               DATABASE_URL is the owner connection for tooling and fixtures only.
 src/shared/db/client.ts       The only place a Postgres connection is created.
 src/shared/auth/supabase.ts   The only place a Supabase client is created (Auth API only, server-side, cookies).
-src/proxy.ts                  Next 16 request interceptor: refreshes the session, short-circuits signed-out requests.
-src/app/_lib/                 Request-scoped helpers for routes: services singleton, currentUser(), requireUser().
+src/proxy.ts                  Next 16 request interceptor: 403 for cross-origin non-GET/HEAD (APP_ORIGIN allow-list),
+                              refreshes the session, short-circuits signed-out requests.
+src/app/_lib/                 Request-scoped helpers for routes: services singleton, getClock(), currentUser(), requireUser().
+src/app/app/[slug]/_lib/      Back-office helpers: loadWorkspace, authoriseAction.
+src/app/_components/forms.tsx Form components (ActionForm, RouteForm, inputs); outcomes are server-action state.
 src/modules/tenancy/          Identity, withTenant/withUserContext, TenantTx/UserTx, AuthorisedTenantContext,
                               permissions, onboarding, invitations and the core tenant-owned tables.
-src/shared/kernel/            Pure ports and types any module may use (e.g. Clock).
+src/modules/booking/          Services, team members, eligibility, working hours, exceptions, service areas,
+                              daily capacity rules (Phase 3); availability and bookings from Phase 4 (ADR-005).
+src/modules/crm/              Custom fields (Phase 3); customers, import and export later.
+src/shared/kernel/            Pure ports and types any module may use (Clock, ValidationError with fieldErrors).
 tests/unit, tests/integration, tests/e2e, tests/helpers, tests/fixtures
 supabase/migrations/          SQL migrations, applied by the Supabase CLI.
 ```
@@ -87,8 +93,9 @@ files under `src` (a file with no imports in or out); no devDependencies in ship
 proven by `tests/unit/dependency-rules.test.ts`. `src/modules/platform` is the reference module.
 
 Modules planned by the design (§3): booking, crm, messaging, ai, analytics, plus tenancy (Phases 1
-and 2: tenant context, identity, authorisation) and platform (health and operations). Create a
-module only when its phase needs it.
+and 2: tenant context, identity, authorisation) and platform (health and operations). booking and
+crm exist since Phase 3; dependencies run crm → booking → tenancy. Create a module only when its
+phase needs it.
 
 ## Coding standards
 
@@ -116,7 +123,29 @@ module only when its phase needs it.
   (`can(role, permission)` in `domain/permissions.ts`); owner-only commands are tested as staff.
   The Supabase admin key and JWT secret are never used or configured (`pnpm check:secrets`).
 - Time zones: canonicalised with `canonicalTimeZone` (Intl) at every boundary before they are
-  stored (ADR-003); never store a zone as the user typed it.
+  stored (ADR-003); never store a zone as the user typed it. Weekly rules (working hours, breaks)
+  are stored as wall-clock values and resolved for a date in the location's zone
+  (`resolveWorkingDay`, ADR-005); only specific stretches of time (exceptions, bookings) are
+  `timestamptz`.
+- Forms: outcomes are server-action state, never URL parameters (ADR-005 §7). Every form is an
+  `ActionForm` (`src/app/_components/forms.tsx`) around a server action with the signature
+  `(previous: FormState, formData) => Promise<FormState>`; build the body with `runForm`, or
+  `failed(previous, formData, error)` when success redirects (`src/app/_lib/form-state.ts`).
+  Inputs are `TextInput`, `SelectInput`, `TextAreaInput`, `CheckInput` (named by the domain's
+  field paths, so `ValidationError.fieldErrors` land next to them) and re-fill from the submitted
+  values after an error; pass `omit: ['password']` for secrets. Revalidate the pages an action
+  changes. The auth route handlers (they must answer 429) use `RouteForm`, which posts with
+  `Accept: application/json` and gets `routeAnswer` JSON; a plain post gets a 303 or an HTML page.
+  A URL may carry only navigation (`next`, a location id) or an allow-listed code (`?link=invalid`),
+  never a message or anything typed.
+- Business type: `updateBusinessSettings(tx, input, businessTypeGuard)` with the guard from
+  `@/modules/crm`; the type is locked once any service exists, and becoming a health business is
+  refused while client-scoped or un-overridden free-text custom fields exist (ADR-005 §2 and §6).
+  Health businesses have no client-scoped custom fields at all.
+- Composition: `createTenancy(db, clock, onboardingHooks)` with booking's hooks (onboarding adds
+  the owner as the first team member); never pass a no-op outside tests of the hook itself.
+- Ids from URLs and forms are checked as UUIDs at the module boundary (`requireId`): malformed is
+  the same `NotFoundError` as another tenant's id.
 - Tables: all in the `rebook` schema (never `public`). Platform-level tables without `tenant_id` (`rate_limits`) are the exception and must be allow-listed in `scripts/lib/schema-check.ts` with a reason. Every tenant-owned table has
   `tenant_id uuid not null`, `unique (tenant_id, id)`, RLS enabled and forced, policies comparing
   against `(select nullif(current_setting('app.tenant_id', true), '')::uuid)`, grants only to
@@ -129,8 +158,10 @@ module only when its phase needs it.
 --name=<what>`), applied only by the Supabase CLI, forward-only, expand then contract. A
   migration that exists on `master` is never edited, renamed or deleted (`pnpm check:migrations`
   fails CI); change the schema with a new migration. No passwords or secrets in migrations.
-  Foreign keys are `tenant_id → tenants(id)`, composite on `tenant_id`, or a user column →
-  `auth.users(id)`; nothing else.
+  Foreign keys are `tenant_id → tenants(id)`, a composite key that maps the child's `tenant_id` to
+  a tenant-owned parent's `tenant_id`, or a user column → `auth.users(id)`; nothing else
+  (`pnpm db:check-schema`). Fixtures with configuration rows: `seedConfiguredTenantPair` (a tenant
+  with a service cannot change business type, so plain `seedTenantPair` stays configuration-free).
 - Next.js: `cacheComponents` is off (tenant data must never be cached across requests); route
   handlers that must reflect live state export `dynamic = 'force-dynamic'`.
 - Formatting is Prettier's; do not fight it. Run `pnpm check` before asking for review.

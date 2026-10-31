@@ -18,6 +18,7 @@ export const PERMISSION_DENIED = '42501';
 export const FOREIGN_KEY_VIOLATION = '23503';
 export const UNIQUE_VIOLATION = '23505';
 export const CHECK_VIOLATION = '23514';
+export const EXCLUSION_VIOLATION = '23P01';
 
 export async function expectSqlState(promise: Promise<unknown>, expected: string): Promise<void> {
   let caught: unknown;

@@ -83,8 +83,8 @@ type EnvVariable = keyof Env;
 const HINTS: Readonly<Record<EnvVariable, string>> = {
   NODE_ENV: "one of 'development', 'test' or 'production' (set by Next.js)",
   APP_DATABASE_URL:
-    'Postgres connection string for the app role rebook_authenticator, e.g. ' +
-    'postgresql://rebook_authenticator:<password>@127.0.0.1:54322/postgres',
+    'Postgres connection string for the app role rebook_authenticator (rebook_authenticator.<project-ref> ' +
+    "through Supabase's pooler), e.g. postgresql://rebook_authenticator:<password>@127.0.0.1:54322/postgres",
   DATABASE_URL:
     'Postgres connection string for the owner role used by migrations and tooling, e.g. ' +
     'postgresql://postgres:postgres@127.0.0.1:54322/postgres',
